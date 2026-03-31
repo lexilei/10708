@@ -24,34 +24,172 @@
 \newpage
 
 % ============================================================
+\section*{Prerequisites: Key Concepts}
+% ============================================================
+
+\subsection*{What is inference?}
+
+\textbf{Inference = asking questions about your model.} You have a model with known parameters, and you want to extract information from it. Any probabilistic question you ask counts as inference. For example:
+
+\begin{itemize}[itemsep=4pt]
+  \item $P(\text{disease} \mid \text{symptoms})$ --- given what you observed (symptoms), what's the probability of something you didn't observe (disease)? This is called a \textbf{conditional} query.
+  \item $P(x_1)$ --- you don't care about the other variables, you just want the probability of $x_1$. This is called a \textbf{marginal} query (because you ``marginalize out'' everything else by summing over it: $P(x_1) = \sum_{x_2, x_3, \dots} P(x_1, x_2, x_3, \dots)$). Note: a conditional is really just two marginals divided: $P(A \mid B) = P(A, B) \,/\, P(B)$.
+  \item $\arg\max_x P(x)$ --- what is the single most probable combination of all variables? This is called \textbf{MAP} (maximum a posteriori) inference.
+  \item Draw random samples from $P(x)$ --- this is called \textbf{sampling}.
+  \item Compute $Z$ --- the \textbf{partition function} (defined below).
+\end{itemize}
+
+These are all different \emph{types} of questions, but they are all inference because the model is fixed and you are extracting information from it.
+
+The course highlights three types in particular because of their computational difficulty:
+\begin{itemize}
+  \item \textbf{Marginals and $Z$}: equally hard --- both are \emph{\#P-hard} (a class of counting problems even harder than NP).
+  \item \textbf{MAP}: a different flavor of hard --- \emph{NP-hard} (an optimization problem, like solving a SAT instance).
+\end{itemize}
+
+\vspace{0.3em}
+\noindent\fbox{\parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule}{%
+\textbf{Inference vs.\ Learning.} \emph{Inference}: model is fixed, answer questions about it. \emph{Learning}: you don't know the model's parameters yet, and you want to find them from data. Learning is harder because each step of learning typically requires doing inference as a subroutine.
+}}
+
+\subsubsection*{MAP vs.\ MLE}
+
+Both are ``$\arg\max$'' problems, but they optimize over different things:
+
+\begin{center}
+\begin{tabular}{l|cc}
+  & \textbf{MAP} & \textbf{MLE} \\
+  \hline
+  What is fixed & model parameters $\theta$ & observed data \\
+  What you optimize & variable assignment $\mathbf{x}$ & parameters $\theta$ \\
+  Formula & $\arg\max_{\mathbf{x}}\, P(\mathbf{x})$ & $\arg\max_{\theta}\, P(\text{data} \mid \theta)$ \\
+  Belongs to & Inference & Learning \\
+\end{tabular}
+\end{center}
+
+\subsubsection*{Conditional vs.\ posterior}
+
+Every \textbf{posterior} is a conditional, but not every conditional is called a posterior. The term \emph{posterior} specifically refers to the Bayesian update:
+\[
+  \underbrace{P(\theta \mid \text{data})}_{\text{posterior}}
+  \;=\;
+  \frac{
+    \overbrace{P(\text{data} \mid \theta)}^{\text{likelihood}}
+    \;\times\;
+    \overbrace{P(\theta)}^{\text{prior}}
+  }{
+    \underbrace{P(\text{data})}_{\text{evidence (another }Z\text{!)}}
+  }
+\]
+You start with a \textbf{prior} belief $P(\theta)$ about the parameters, observe data, then update to the \textbf{posterior} $P(\theta \mid \text{data})$ via Bayes' rule. In PGM literature, people often use ``conditional'' and ``posterior'' interchangeably for $P(z \mid x)$.
+
+\subsection*{Bayesian reasoning}
+
+Bayesian reasoning has three ingredients, chosen in this order:
+
+\begin{enumerate}
+  \item \textbf{Model family} (your choice of distribution type). For example: ``I'll model this data with a geometric distribution.'' This is fixed \emph{before} you see any data and is \emph{not} part of the prior.
+  \item \textbf{Prior} $P(\theta)$ (your belief about the \emph{parameter values} before seeing data). For example: ``I think the success probability $p$ is somewhere between 0 and 1, I have no idea where, so I'll use a uniform prior on $[0,1]$.'' The prior is about $\theta$, not about which model to use.
+  \item \textbf{Data} $x_1, x_2, \dots, x_n$ (what you observe).
+\end{enumerate}
+
+After observing data, Bayes' rule gives you the posterior:
+\[
+  P(\theta \mid \text{data})
+  \;=\;
+  \frac{P(\text{data} \mid \theta) \;\times\; P(\theta)}{P(\text{data})}
+  \;\propto\;
+  \underbrace{P(\text{data} \mid \theta)}_{\text{likelihood}} \;\times\; \underbrace{P(\theta)}_{\text{prior}}
+\]
+
+\subsubsection*{What if the prior is wrong?}
+
+\textbf{A wrong prior is forgivable.} As you see more data, the likelihood dominates and the prior's influence fades. The posterior concentrates around the true parameter value regardless of where the prior started.
+
+Example: you're flipping a coin that lands heads 90\% of the time. Your prior says $P(\text{heads}) = 0.5$. After 10 flips you might still be uncertain, but after 10{,}000 flips your posterior will be tightly concentrated near 0.9.
+
+\subsubsection*{What if the model is wrong?}
+
+\textbf{A wrong model is not forgivable.} If the true distribution is geometric but your model family only contains uniform distributions, no amount of data will recover the truth. The posterior will converge to whichever parameters make the uniform look ``as close as possible'' to the geometric---but it will never become geometric.
+
+\vspace{0.3em}
+\noindent\fbox{\parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule}{%
+\textbf{Key distinction.} The \emph{prior} is your initial guess about parameter values---data corrects it. The \emph{model family} defines the space of distributions you can even consider---if the truth is not in that space, no amount of data helps.
+}}
+
+\subsection*{What is a partition function?}
+
+A probability distribution has one hard rule: all probabilities must add up to 1.
+
+In many models, we don't directly write down probabilities. Instead, we assign each outcome a \textbf{score} (an unnormalized number indicating how ``likely'' it is). For example:
+\[
+  \text{outcome } A: \text{score } 3, \qquad
+  \text{outcome } B: \text{score } 5, \qquad
+  \text{outcome } C: \text{score } 2.
+\]
+These scores add up to $3 + 5 + 2 = 10$, not 1. To turn them into valid probabilities, we divide each score by the total:
+\[
+  P(A) = \frac{3}{10}, \qquad P(B) = \frac{5}{10}, \qquad P(C) = \frac{2}{10}.
+\]
+That total---the number we divide by---is the \textbf{partition function} $Z$. In general:
+\[
+  \boxed{Z = \sum_{\text{all possible outcomes } x} f(x)}
+  \qquad \text{so that} \qquad
+  P(x) = \frac{f(x)}{Z}
+\]
+where $f(x)$ is the unnormalized score for outcome $x$.
+
+\subsection*{Why is $Z$ a problem?}
+
+With 3 outcomes, $Z$ is trivial. But in a graphical model with, say, 100 binary (0 or 1) variables, the number of possible outcomes is:
+\[
+  2^{100} \approx 10^{30}.
+\]
+Computing $Z$ means summing over \emph{all} $10^{30}$ scores. No computer can do this---the number of operations grows exponentially with the number of variables.
+
+\subsection*{What is the likelihood function?}
+
+Suppose you observe data $x_1, x_2, \dots, x_n$ and you have a model with parameters $\theta$. The \textbf{likelihood} asks: \emph{given these parameters $\theta$, how probable is the data I observed?}
+\[
+  L(\theta) \;=\; p(x_1 \mid \theta) \;\times\; p(x_2 \mid \theta) \;\times\; \cdots \;\times\; p(x_n \mid \theta)
+\]
+\textbf{Learning} = finding the $\theta$ that makes $L(\theta)$ as large as possible. This is called \textbf{maximum likelihood estimation (MLE)}.
+
+\subsection*{Why does $Z$ block learning?}
+
+Each $p(x_i \mid \theta)$ has $Z(\theta)$ hidden inside it:
+\[
+  p(x_i \mid \theta) = \frac{f_\theta(x_i)}{Z(\theta)},
+  \qquad \text{where} \quad
+  Z(\theta) = \sum_{\text{all } x} f_\theta(x).
+\]
+The numerator $f_\theta(x_i)$ is cheap---just plug in $x_i$. But the denominator $Z(\theta)$ requires summing over all possible outcomes. Worse: every time you try a new $\theta$ during optimization, $Z(\theta)$ changes, so you'd have to redo that impossible sum from scratch.
+
+\vspace{0.5em}
+\noindent\fbox{\parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule}{%
+\textbf{Bottom line.} Almost everything we want to do---computing probabilities, marginals, learning parameters---requires $Z$, and $Z$ is intractable. The entire second half of this course is about methods that work \emph{around} this problem.
+}}
+
+% ============================================================
 \section*{Big Picture: Post-Midterm Roadmap}
 % ============================================================
 
-The central problem of PGMs: distributions are \textbf{intractable}---sampling, computing marginals, and evaluating the partition function $Z$ are all \#P-hard in general (and interreducible).
+With the $Z$ problem in mind, the course offers two categories of solutions:
 
-The second half of the course addresses this with two questions:
-
-\subsection*{Question 1: How to do inference on an intractable distribution?}
-
-Two families of approximate inference:
+\subsection*{Category 1: Inference (given a model, answer questions about it)}
 
 \begin{itemize}
-  \item \textbf{MCMC} (L9, L11): Design a Markov chain whose stationary distribution is the target $\pi$. We never need to compute $Z$---only unnormalized density \emph{ratios} (e.g.\ the MH acceptance ratio $\frac{\tilde{p}(x')q(x|x')}{\tilde{p}(x)q(x'|x)}$ where $Z$ cancels).
-  \item \textbf{Variational Inference} (L13): Turn inference into optimization. Find $q^* = \arg\min_{q \in \mathcal{Q}} \mathrm{KL}(q \| p)$, equivalently maximize the ELBO:
-  \[
-    \mathrm{ELBO}(q) = H(q) + \mathbb{E}_{q}[E(x)] = \log Z - \mathrm{KL}(q\|p) \leq \log Z
-  \]
+  \item \textbf{MCMC} (L9, L11): Generate samples from the distribution \emph{without} computing $Z$. (We will explain how later.)
+  \item \textbf{Variational Inference} (L13): Instead of sampling, find a simpler distribution that is ``close'' to the true one, by solving an optimization problem. (We will define ``close'' precisely later.)
 \end{itemize}
 
-\subsection*{Question 2: How to \emph{learn} (train) a generative model?}
-
-Different strategies, with increasing departure from classical MLE:
+\subsection*{Category 2: Learning (train the model's parameters)}
 
 \begin{enumerate}
-  \item \textbf{EM} (L15): For latent-variable models. Uses VI as a subroutine---alternate between E-step (approximate posterior via ELBO) and M-step (update $\theta$). This is coordinate ascent on the ELBO.
-  \item \textbf{VAE} (L16): Scale EM to neural nets. Amortized inference $q_\phi(z|x)$ + reparameterization trick to backprop through sampling.
-  \item \textbf{GAN} (L17--18): Abandon likelihood entirely. VAE produces blurry samples because $\mathrm{KL}(p\|q)$ encourages mode-averaging. GANs instead use an adversarial game---a discriminator learns the ``distance'' between real and generated distributions.
-  \item \textbf{Score Matching} (L19): Also abandon $Z$, but differently. Match the \emph{score function} $\nabla_x \log p_\theta(x)$ directly. Since $\nabla_x \log \frac{e^{-E_\theta(x)}}{Z} = -\nabla_x E_\theta(x)$, the partition function $Z$ vanishes under the gradient.
+  \item \textbf{EM} (L15): Uses variational inference as a building block to learn parameters of models with hidden variables.
+  \item \textbf{VAE} (L16): Scales EM to work with neural networks.
+  \item \textbf{GAN} (L17--18): Gives up on likelihood entirely. Uses an adversarial game between two networks instead.
+  \item \textbf{Score Matching} (L19): Also gives up on $Z$. Instead of matching the distribution itself, matches its \emph{gradient}---and $Z$ conveniently disappears when you take the gradient. (We will show why later.)
 \end{enumerate}
 
 \subsection*{Dependency structure}
@@ -88,10 +226,6 @@ Different strategies, with increasing departure from classical MLE:
   \node[left=0.3cm of l19, anchor=east, font=\footnotesize\itshape] {Learning (alt)};
 \end{tikzpicture}
 \end{center}
-
-\begin{remark}
-  MCMC and VI are both \emph{inference} methods (given a model, answer queries about it). EM/VAE/GAN/Score Matching are \emph{learning} methods (train the model). EM and VAE use inference as a subroutine; GAN and Score Matching bypass inference entirely.
-\end{remark}
 
 \newpage
 

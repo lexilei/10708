@@ -45,6 +45,13 @@ Score 线:        L19 (Score Matching / EBM)
 
 -
 
+## 解释风格
+
+- Assume minimal background，每个术语第一次出现时都要定义
+- 先讲直觉/动机，再上公式
+- 不要跳步
+- LaTeX 中英夹杂：中文行文 + 英文 terminology，风格贴近对话
+
 ## 考试相关
 
 -
