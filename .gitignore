@@ -1,0 +1,31 @@
+# Track only our notes
+/*
+!/.gitignore
+!/Lecture Slides/
+/Lecture Slides/*
+!/Lecture Slides/notes.tex
+!/Lecture Slides/notes.pdf
+!/Lecture Slides/cheatsheet.tex
+!/Lecture Slides/cheatsheet.pdf
+!/Lecture Slides/memo.md
+
+# LaTeX auxiliary files
+*.aux
+*.log
+*.out
+*.toc
+*.lof
+*.lot
+*.fls
+*.fdb_latexmk
+*.synctex.gz
+*.synctex(busy)
+*.bbl
+*.blg
+*.nav
+*.snm
+*.vrb
+
+# OS files
+.DS_Store
+Thumbs.db

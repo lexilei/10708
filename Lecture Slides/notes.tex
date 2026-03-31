@@ -1,0 +1,182 @@
+\documentclass[11pt]{article}
+
+\usepackage[utf8]{inputenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{amsmath, amssymb, amsthm}
+\usepackage{graphicx}
+\usepackage{hyperref}
+\usepackage{enumitem}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta, positioning}
+
+\newtheorem{definition}{Definition}[section]
+\newtheorem{theorem}{Theorem}[section]
+\newtheorem{lemma}{Lemma}[section]
+\newtheorem{remark}{Remark}[section]
+
+\title{10-708 Probabilistic Graphical Models \\ Lecture Notes}
+\author{}
+\date{Spring 2026}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+% ============================================================
+\section*{Big Picture: Post-Midterm Roadmap}
+% ============================================================
+
+The central problem of PGMs: distributions are \textbf{intractable}---sampling, computing marginals, and evaluating the partition function $Z$ are all \#P-hard in general (and interreducible).
+
+The second half of the course addresses this with two questions:
+
+\subsection*{Question 1: How to do inference on an intractable distribution?}
+
+Two families of approximate inference:
+
+\begin{itemize}
+  \item \textbf{MCMC} (L9, L11): Design a Markov chain whose stationary distribution is the target $\pi$. We never need to compute $Z$---only unnormalized density \emph{ratios} (e.g.\ the MH acceptance ratio $\frac{\tilde{p}(x')q(x|x')}{\tilde{p}(x)q(x'|x)}$ where $Z$ cancels).
+  \item \textbf{Variational Inference} (L13): Turn inference into optimization. Find $q^* = \arg\min_{q \in \mathcal{Q}} \mathrm{KL}(q \| p)$, equivalently maximize the ELBO:
+  \[
+    \mathrm{ELBO}(q) = H(q) + \mathbb{E}_{q}[E(x)] = \log Z - \mathrm{KL}(q\|p) \leq \log Z
+  \]
+\end{itemize}
+
+\subsection*{Question 2: How to \emph{learn} (train) a generative model?}
+
+Different strategies, with increasing departure from classical MLE:
+
+\begin{enumerate}
+  \item \textbf{EM} (L15): For latent-variable models. Uses VI as a subroutine---alternate between E-step (approximate posterior via ELBO) and M-step (update $\theta$). This is coordinate ascent on the ELBO.
+  \item \textbf{VAE} (L16): Scale EM to neural nets. Amortized inference $q_\phi(z|x)$ + reparameterization trick to backprop through sampling.
+  \item \textbf{GAN} (L17--18): Abandon likelihood entirely. VAE produces blurry samples because $\mathrm{KL}(p\|q)$ encourages mode-averaging. GANs instead use an adversarial game---a discriminator learns the ``distance'' between real and generated distributions.
+  \item \textbf{Score Matching} (L19): Also abandon $Z$, but differently. Match the \emph{score function} $\nabla_x \log p_\theta(x)$ directly. Since $\nabla_x \log \frac{e^{-E_\theta(x)}}{Z} = -\nabla_x E_\theta(x)$, the partition function $Z$ vanishes under the gradient.
+\end{enumerate}
+
+\subsection*{Dependency structure}
+
+\begin{center}
+\begin{tikzpicture}[
+    node distance=0.4cm and 1.6cm,
+    every node/.style={font=\small},
+    box/.style={draw, rounded corners, minimum height=0.8cm, minimum width=1.8cm, align=center},
+    arr/.style={-{Stealth[length=5pt]}, thick}
+  ]
+  % MCMC track
+  \node[box] (l9)  {L9\\MCMC Intro};
+  \node[box, right=of l9] (l11) {L11\\Adv.\ MCMC};
+  \draw[arr] (l9) -- (l11);
+
+  % VI track
+  \node[box, below=1.2cm of l9] (l13) {L13\\VI};
+  \node[box, right=of l13] (l15) {L15\\EM};
+  \node[box, right=of l15] (l16) {L16\\VAE};
+  \node[box, right=of l16] (l17) {L17\\GAN};
+  \node[box, right=of l17] (l18) {L18\\GAN Apps};
+  \draw[arr] (l13) -- (l15);
+  \draw[arr] (l15) -- (l16);
+  \draw[arr] (l16) -- (l17);
+  \draw[arr] (l17) -- (l18);
+
+  % Score matching
+  \node[box, below=1.2cm of l13] (l19) {L19\\Score Match};
+
+  % Labels
+  \node[left=0.3cm of l9, anchor=east, font=\footnotesize\itshape] {Inference};
+  \node[left=0.3cm of l13, anchor=east, font=\footnotesize\itshape] {Learning (main)};
+  \node[left=0.3cm of l19, anchor=east, font=\footnotesize\itshape] {Learning (alt)};
+\end{tikzpicture}
+\end{center}
+
+\begin{remark}
+  MCMC and VI are both \emph{inference} methods (given a model, answer queries about it). EM/VAE/GAN/Score Matching are \emph{learning} methods (train the model). EM and VAE use inference as a subroutine; GAN and Score Matching bypass inference entirely.
+\end{remark}
+
+\newpage
+
+% ============================================================
+\section{Introduction}
+% Lecture 1
+% ============================================================
+
+
+% ============================================================
+\section{Directed Graphical Models (Bayesian Networks)}
+% Lecture 2
+% ============================================================
+
+
+% ============================================================
+\section{Undirected Graphical Models (MRFs)}
+% Lectures 3--4
+% ============================================================
+
+
+% ============================================================
+\section{Exact Inference}
+% Lecture 5
+% ============================================================
+
+
+% ============================================================
+\section{Belief Propagation}
+% Lectures 6--7
+% ============================================================
+
+
+% ============================================================
+\section{Graph Neural Networks}
+% Lecture 8
+% ============================================================
+
+
+% ============================================================
+\section{MCMC Introduction}
+% Lecture 9
+% ============================================================
+
+
+% ============================================================
+\section{Advanced MCMC}
+% Lecture 11
+% ============================================================
+
+
+% ============================================================
+\section{Variational Inference}
+% Lecture 13
+% ============================================================
+
+
+% ============================================================
+\section{Expectation-Maximization (EM)}
+% Lecture 15
+% ============================================================
+
+
+% ============================================================
+\section{Variational Autoencoders (VAE)}
+% Lecture 16
+% ============================================================
+
+
+% ============================================================
+\section{Generative Adversarial Networks (GAN)}
+% Lecture 17
+% ============================================================
+
+
+% ============================================================
+\section{Applications of GANs}
+% Lecture 18
+% ============================================================
+
+
+% ============================================================
+\section{Score Matching}
+% Lecture 19
+% ============================================================
+
+
+\end{document}
