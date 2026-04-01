@@ -65,6 +65,7 @@ Score 线:        L19 (Score Matching / EBM)
 ### L13 待继续
 - [ ] Slides 后半部分的具体 example（pairwise UGM 上的 CAVI）
 - [ ] Outer relaxation 的细节
+- [ ] Lagrange multiplier（完全没学懂，之后补）
 
 ## TODO
 
