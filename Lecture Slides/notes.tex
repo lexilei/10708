@@ -6,6 +6,7 @@
 \usepackage{graphicx}
 \usepackage{hyperref}
 \usepackage{enumitem}
+\usepackage{CJKutf8}
 \usepackage{tikz}
 \usetikzlibrary{arrows.meta, positioning}
 
@@ -19,6 +20,7 @@
 \date{Spring 2026}
 
 \begin{document}
+\begin{CJK}{UTF8}{gbsn}
 \maketitle
 \tableofcontents
 \newpage
@@ -282,6 +284,339 @@ With the $Z$ problem in mind, the course offers two categories of solutions:
 % Lecture 13
 % ============================================================
 
+\subsection{核心思路}
+
+我们想算 $\log Z$（或者做 inference），但直接算 intractable。VI 的思路：\textbf{把算 $Z$ 的问题变成一个 optimization 问题}。
+
+\subsubsection{为什么叫 ``Variational''？}
+
+``Variational'' 来自数学里的 \textbf{calculus of variations}（变分法）。普通 calculus 优化的对象是\textbf{数}（找 $x$ 使 $f(x)$ 最小）；calculus of variations 优化的对象是\textbf{函数或分布}（找 $q$ 使 $F[q]$ 最小）。VI 做的正是后者 --- 优化一个分布 $q$。
+
+几个相关概念里的 ``variational'' 是同一个意思：
+
+\begin{center}
+\begin{tabular}{l|l}
+  \textbf{Variational family} $\mathcal{Q}$ & 候选分布的集合，我们在里面搜索最优 $q$ \\
+  \textbf{Variational inference} & 通过在 $\mathcal{Q}$ 上优化来做 inference \\
+\end{tabular}
+\end{center}
+
+其实 Gibbs Variational Principle 本身就是 variational 的 --- 它在\textbf{所有分布}上优化来精确算 $\log Z$。VI 只是它的 practical 版本：把搜索范围从"所有分布"缩小到一个 tractable 的 $\mathcal{Q}$。
+
+\begin{center}
+\begin{tabular}{l|l|l}
+  & \textbf{GVP} & \textbf{VI} \\
+  \hline
+  搜索范围 & $\max_{q:\text{所有分布}}$ ELBO & $\max_{q \in \mathcal{Q}}$ ELBO \\
+  结果 & 精确 $= \log Z$ & 近似 $\leq \log Z$ \\
+  可行性 & Intractable & Tractable \\
+\end{tabular}
+\end{center}
+
+\subsection{和统计力学的关系}
+
+如果你学过 stat mech，这里的数学框架和统计力学\textbf{完全一样}。
+
+在统计力学中，一个系统的每个 microstate $x$ 有 energy $E(x)$，平衡态下的分布是 Boltzmann distribution：
+\[
+  p(x) = \frac{1}{Z} e^{-E(x)/kT}
+\]
+其中 $Z = \sum_x e^{-E(x)/kT}$ 就是 partition function，free energy $F = -kT\log Z$。所有热力学量（entropy、压强、比热等）都可以从 $F$ 推出来。
+
+\subsubsection{什么是 free energy？}
+
+一个系统想要两件事：\textbf{降低 energy}（低 energy 更稳定）和\textbf{增加 entropy}（系统倾向于更随机的状态）。这两个目标经常矛盾。比如水结冰：冰的 energy 低（分子排列整齐），但 entropy 也低（很有序）。
+
+Free energy 把这两个目标合成一个数：
+\[
+  F = \langle E \rangle - T \cdot S
+\]
+
+\begin{itemize}
+  \item 低温（$T$ 小）：$T \cdot S$ 项不重要，系统主要追求低 energy $\to$ 水结冰
+  \item 高温（$T$ 大）：$T \cdot S$ 项主导，系统主要追求高 entropy $\to$ 冰融化
+\end{itemize}
+
+\textbf{平衡态 = minimize $F$ 的状态。}温度 $T$ 控制了 energy 和 entropy 之间的 trade-off。
+
+和 PGM 的联系：注意 slides 和物理的\textbf{符号约定相反} --- slides 写 $p \propto \exp(+E_{slides})$，物理写 $p \propto \exp(-E_{phys})$，所以 $E_{slides} = -E_{phys}$（取 $kT=1$）。对应关系：
+
+\begin{center}
+\begin{tabular}{l|l}
+  \textbf{PGM (slides)} & \textbf{物理} \\
+  \hline
+  $H(q)$ & $S$（entropy，同一个东西） \\
+  $\mathbb{E}_q[E_{slides}(x)]$ & $-\langle E_{phys}\rangle$（符号相反） \\
+\end{tabular}
+\end{center}
+
+因此：
+\[
+  \underbrace{H(q) + \mathbb{E}_q[E_{slides}]}_{\text{ELBO}}
+  \;=\; S \;+\; (-\langle E_{phys}\rangle)
+  \;=\; -\big(\langle E_{phys}\rangle - S\big)
+  \;=\; -F
+\]
+所以 \textbf{ELBO $= -F$}（negative free energy）。Maximize ELBO = minimize free energy。VI 做的事情和统计力学找平衡态是同一个 optimization。
+
+（注：$\langle E \rangle$ 是物理学家写期望值 $\mathbb{E}[E]$ 的习惯，尖括号 = 期望。）
+
+\subsubsection{为什么平衡态是 Boltzmann distribution？}
+
+Boltzmann distribution 是在\textbf{给定平均 energy 的约束下，entropy 最大的分布}。
+
+一个系统和环境达到热平衡后，温度 $T$ 固定了，也就意味着平均 energy $\langle E \rangle$ 固定了。在这个约束下，分子们会以最"随机"的方式分配 energy --- 即 maximize entropy。用 Lagrange multiplier 解这个 constrained optimization：
+\[
+  \max_q H(q) \quad \text{subject to} \quad \mathbb{E}_q[E(x)] = \text{固定值}
+\]
+解出来就是 $q(x) \propto e^{-E(x)/kT}$，即 Boltzmann distribution。温度 $T$ 正好对应 Lagrange multiplier。
+
+本质：Boltzmann distribution 是\textbf{在已知平均 energy 的前提下，最不做额外假设（最大 entropy）的分布}。这跟 Gibbs variational principle 是同一件事的两种说法。
+
+\subsubsection{Boltzmann Machine：把 Boltzmann distribution 当模型}
+
+这门课后面（L19 slides）会出现 Restricted Boltzmann Machine (RBM)。Boltzmann machine 就是一个\textbf{直接用 Boltzmann distribution 作为概率模型的神经网络}。
+
+它定义一个 energy function（其中 $\mathbf{v}$ 是 visible variables，$\mathbf{h}$ 是 hidden variables，$W, a, b$ 是可学习的参数）：
+\[
+  E(\mathbf{v}, \mathbf{h}) = -\sum_{ij} W_{ij} v_i h_j - \sum_i b_i v_i - \sum_j a_j h_j
+\]
+然后概率分布就是：
+\[
+  P(\mathbf{v}, \mathbf{h}) = \frac{1}{Z} \exp\!\big(-E(\mathbf{v}, \mathbf{h})\big)
+\]
+第二个公式就是 Boltzmann distribution：$p = \frac{1}{Z}e^{-E}$（取 $kT=1$）。唯一的区别是这里的 energy 不是物理系统的真实 energy，而是由网络参数 $W, a, b$ \textbf{人为定义}的。但分布的\textbf{数学形式}和 Boltzmann distribution 一模一样 --- 每个 state 的概率正比于 $e^{-E}$，然后除以 $Z$ 归一化。
+
+所以 Boltzmann machine 就是在说："我选一个 energy function 的形式（用 $W, a, b$ 参数化），然后用 Boltzmann distribution 作为我的概率模型。" 名字就是这么来的。RBM 是特殊情况：visible 和 hidden 之间有连接，同层内部没有（bipartite structure）。
+
+这和我们的问题直接相关：训练 Boltzmann machine 需要 MLE $\to$ 需要 likelihood $\to$ 需要 $Z$ $\to$ $Z$ intractable $\to$ 需要 MCMC 或 VI 来近似。
+
+PGM 里用的是\textbf{同样的数学结构}，只不过：
+\begin{itemize}
+  \item ``Energy'' 只是 log-unnormalized probability 的别名，没有物理含义
+  \item Temperature 固定为 1（即 $kT = 1$）
+  \item 符号约定可能相反：slides 写 $p(x) = \frac{1}{Z}\exp(+E(x))$（高 energy = 高概率），物理里通常 $\exp(-E(x))$（低 energy = 高概率）
+\end{itemize}
+
+\noindent 对应关系：
+
+\begin{center}
+\begin{tabular}{l|l}
+  \textbf{统计力学} & \textbf{PGM} \\
+  \hline
+  Microstate $x$ & Variable assignment $\mathbf{x}$ \\
+  Energy $E(x)$ & Unnormalized log-score \\
+  Boltzmann distribution $\frac{1}{Z}e^{-E/kT}$ & Model distribution $\frac{1}{Z}e^{E(x)}$ \\
+  Partition function $Z$ & Partition function $Z$（同一个东西） \\
+  Free energy $F = \langle E \rangle - TS$ & Negative ELBO \\
+  Entropy $S = -k\sum p\log p$ & Shannon entropy $H = -\sum p\log p$ \\
+\end{tabular}
+\end{center}
+
+\subsection{Gibbs Variational Principle}
+
+在统计力学中，平衡态就是让 free energy $F = \langle E \rangle - TS$ 最小的分布。等价地说：在所有分布 $q$ 中，让 entropy 和 energy 的组合最大的那个就是 Boltzmann distribution。
+
+形式化地写（取 slides 的符号约定，$kT=1$）：
+
+\[
+  \boxed{\log Z = \max_{q:\text{ distribution over } \mathcal{X}} \Big[ H(q) + \mathbb{E}_{x\sim q}[E(x)] \Big]}
+\]
+
+其中：
+\begin{itemize}
+  \item $H(q) = -\sum_x q(x)\log q(x)$：\textbf{entropy}，衡量 $q$ 有多"分散"。$q$ 越 uniform，$H$ 越大；$q$ 越集中在一个点上，$H$ 越小（最小为 0）。
+  \item $\mathbb{E}_{x\sim q}[E(x)] = \sum_x q(x) E(x)$：在 $q$ 下的\textbf{平均 energy}。$q$ 应该把概率放在高 energy（高分数）的地方。
+\end{itemize}
+
+直觉：好的 $q$ 需要\textbf{两者兼顾} --- 既要在高 energy 的地方有大概率（第二项），又不能太集中（第一项鼓励分散）。这个 trade-off 的最优解就是 $p$ 本身。
+
+\subsubsection{为什么两项都要？}
+
+\begin{itemize}
+  \item 只 maximize $\mathbb{E}_q[E(x)]$，不要 $H$ $\to$ 最优 $q$ 是 point mass 在 $\arg\max E(x)$ 上 $\to$ 这就是 MAP（一个点），不是 $\log Z$
+  \item 只 maximize $H(q)$，不要 $E$ $\to$ 最优 $q$ 是 uniform $\to$ 完全不看 energy
+  \item 两个都要 $\to$ 得到 Boltzmann distribution $p$（在高 energy 处概率大，但也覆盖其他 state）
+\end{itemize}
+
+$H$ 项不是 regularizer --- 它是 KL divergence 定义的数学后果（下一节会推导）。如果你换一种 divergence（比如 $\mathrm{KL}(p\|q)$ 而不是 $\mathrm{KL}(q\|p)$），你会得到不同的方法（比如 Expectation Propagation），但 $H$ 在标准 VI 中是不可替换的。
+
+\subsubsection{GVP 的适用范围}
+
+GVP 对\textbf{任何分布}都成立，不限于 Boltzmann machine 或 undirected model。只要 $p(x) > 0$，你就可以定义 $E(x) = \log p(x) + \log Z$，整个推导就 work。推导只用了两个东西：
+\begin{enumerate}
+  \item $p(x) = \frac{1}{Z}\exp(E(x))$（任何正的分布都能这样写）
+  \item $\mathrm{KL}(q\|p) \geq 0$（永远成立）
+\end{enumerate}
+
+但"成立"和"有用"是两回事。GVP 把"算 $Z$"变成"optimize over 所有分布"--- 后者也是 intractable 的。它变得有用，是因为可以限制到小 family $\mathcal{Q}$（比如 mean-field）。近似的质量取决于：
+
+\begin{center}
+\begin{tabular}{l|l}
+  $E(x)$ 好不好算 & Undirected model 里 potential functions 直接给出 $E(x)$，很方便。\\
+  & 某些模型里 $E(x)$ 本身就不好算。\\
+  \hline
+  $\mathcal{Q}$ 选得好不好 & Mean-field 假设变量独立 --- 如果真实分布 correlation 很强，\\
+  & 近似就差。\\
+\end{tabular}
+\end{center}
+
+GVP 是一个万能的\textbf{框架}。具体怎么选 $\mathcal{Q}$、怎么 optimize，才是 VI 真正在做的事。
+
+\subsection{证明：通过 KL divergence}
+
+这里引入一个新概念：\textbf{KL divergence}，衡量两个分布 $q$ 和 $p$ 之间的"距离"。
+
+\begin{definition}[KL Divergence]
+\[
+  \mathrm{KL}(q \| p) = \sum_x q(x) \log \frac{q(x)}{p(x)} = \mathbb{E}_q\!\left[\log \frac{q(x)}{p(x)}\right]
+\]
+\end{definition}
+
+关键性质：$\mathrm{KL}(q\|p) \geq 0$，等号当且仅当 $q = p$。（注意它不是对称的：$\mathrm{KL}(q\|p) \neq \mathrm{KL}(p\|q)$。）
+
+现在用 KL divergence 来证明 Gibbs variational principle。把 $p(x) = \frac{1}{Z}\exp(E(x))$ 代入：
+
+\begin{align}
+  0 \;\leq\; \mathrm{KL}(q \| p)
+  &= \mathbb{E}_q[\log q] - \mathbb{E}_q[\log p] \notag \\
+  &= \mathbb{E}_q[\log q] - \mathbb{E}_q\!\big[E(x) - \log Z\big] \notag \\
+  &= -H(q) - \mathbb{E}_q[E(x)] + \log Z \notag
+\end{align}
+
+重新整理：
+\[
+  \boxed{H(q) + \mathbb{E}_q[E(x)] = \log Z - \mathrm{KL}(q\|p) \leq \log Z}
+\]
+
+这就是 \textbf{ELBO}（Evidence Lower BOund）：对任意 $q$，$H(q) + \mathbb{E}_q[E(x)]$ 都是 $\log Z$ 的一个\textbf{下界}。当 $q = p$ 时 $\mathrm{KL} = 0$，等号成立。
+
+\subsubsection{为什么叫 Evidence Lower Bound？}
+
+这里的 \textbf{evidence} 指的是\textbf{数据的概率} $P(\text{data})$，也叫 \textbf{marginal likelihood}。在有 latent variable $z$ 的模型里：
+\[
+  P(x) = \sum_z p(x, z)
+\]
+这个 $P(x)$ 衡量"在你的模型下，数据 $x$ 有多合理"。而 $P(x)$ 就是一个 $Z$ --- 分母里那个 intractable 的求和。
+
+所以 $\log Z = \log P(\text{data}) = \log\text{evidence}$，而 ELBO $\leq \log Z$，即 ELBO 是 $\log\text{evidence}$ 的 lower bound --- 名字就是这么来的。后面 EM（L15）和 VAE（L16）里会反复出现 ELBO。
+
+\subsection{问题：optimize over 所有分布还是 intractable}
+
+Gibbs variational principle 说 $\log Z = \max_q [\text{ELBO}]$。但这个 $\max$ 是在\textbf{所有分布}上取的 --- 如果有 $n$ 个二元变量，一个 distribution 需要 $2^n$ 个数来描述，还是 intractable。
+
+所以我们需要\textbf{限制搜索范围}：不在所有分布里找最优 $q$，而是在一个"简单的" family $\mathcal{Q}$ 里找：
+\[
+  \max_{q \in \mathcal{Q}} \Big[ H(q) + \mathbb{E}_q[E(x)] \Big] \;\leq\; \log Z
+\]
+
+因为 $\mathcal{Q}$ 比全集小，所以最优值只会\textbf{更小或相等} --- 仍然是 $\log Z$ 的下界。这叫 \textbf{inner approximation}（在更小的集合里 optimize）。
+
+\subsection{Mean-Field Approximation}
+
+最常见的 $\mathcal{Q}$：\textbf{product distributions}（也叫 mean-field family）。
+
+假设有 $n$ 个变量 $x_1, \dots, x_n$。Mean-field 假设所有变量\textbf{互相独立}：
+\[
+  q(x) = q_1(x_1) \times q_2(x_2) \times \cdots \times q_n(x_n)
+\]
+
+每个 $q_i$ 是一个单变量的分布。如果每个 $x_i \in \{+1, -1\}$，那每个 $q_i$ 只需要一个参数（$q_i(x_i = +1)$ 的值），所以整个 $q$ 只需要 $n$ 个参数 --- 从 $2^n$ 降到了 $n$。
+
+这和物理里的 mean-field theory 是\textbf{同一个东西}。比如 Ising model 的 mean-field：假设每个 spin 独立，用平均场（mean field）代替邻居的影响。
+
+\subsubsection{为什么 mean-field 有时合理？}
+
+想象 Ising model 里的一个 spin，它跟 $N$ 个邻居互相作用。如果 $N$ 很大，大数定律告诉你这 $N$ 个邻居的总影响会集中在它们的\textbf{平均值}附近（fluctuation $\sim 1/\sqrt{N}$）。所以用 mean（平均值）代替真实的邻居，误差随 $N$ 增大而变小。这就是 ``mean field'' 名字的来源。
+
+经典例子：$d$ 维 Ising model，每个 spin 有 $2d$ 个邻居。
+\begin{itemize}
+  \item $d=2$（标准方格子）：每个 spin 只有 4 个邻居，mean-field 给出的临界温度是\textbf{错的}
+  \item $d \geq 4$：邻居足够多，mean-field 给出的 critical exponents 与精确解一致
+\end{itemize}
+
+\subsubsection{为什么 mean-field 在 PGM 里经常不够好？}
+
+两个原因，经常同时出现：
+
+\begin{enumerate}
+  \item \textbf{邻居少}（图稀疏）：很多 graphical model 里每个变量只跟 3--20 个邻居连接（tree structure 甚至只有 2--3 个）。邻居少 $\to$ 大数定律不 kick in $\to$ 用平均值代替真实邻居的误差大。跟 2D Ising 只有 4 个邻居是同一个问题。
+  \item \textbf{Interaction 强}：即使邻居多，如果两个变量之间的 interaction 很强（几乎总是同时出现或同时不出现），mean-field 也不行 --- 因为 mean-field 假设独立，但强 interaction 意味着强 correlation，两者矛盾。
+\end{enumerate}
+
+这也是为什么后面会有更复杂的 variational family（不只是 product distribution），来在 tractability 和 expressiveness 之间找更好的平衡。
+
+\subsection{CAVI: Coordinate Ascent Variational Inference}
+
+确定了 mean-field family 之后，怎么找最优的 $q$？用 \textbf{coordinate ascent}：每次只更新一个 $q_i$，固定其他所有 $q_j$（$j \neq i$）。
+
+\textbf{Coordinate ascent} 的直觉：想象你在爬山，但每次只能沿一个坐标轴方向走。你先沿 $x$ 方向走到最高点，然后沿 $y$ 方向走到最高点，反复交替。不保证到全局最优，但实际中效果不错。
+
+具体来说，固定其他 $q_j$ 后，最优的 $q_i$ 是：
+\[
+  q_i(x_i) \;\propto\; \exp\!\Big(\mathbb{E}_{q_{-i}}\big[E(x)\big]\Big)
+\]
+
+其中 $q_{-i}$ 表示"除了 $q_i$ 以外的所有 $q_j$"，$\mathbb{E}_{q_{-i}}$ 表示对除 $x_i$ 以外的变量取期望。
+
+\subsubsection{推导}
+
+我们在 maximize ELBO over $q_i$，固定其他 $q_j$。因为 $q$ 是 product distribution，entropy 可以拆开：$H(q) = \sum_j H(q_j)$。只看跟 $q_i$ 有关的部分：
+\[
+  \max_{q_i}\; \underbrace{H(q_i)}_{\text{只关于 } q_i \text{ 的 entropy}}
+  \;+\; \underbrace{\mathbb{E}_{q_i}\!\Big[\mathbb{E}_{q_{-i}}[E(x)]\Big]}_{\text{先对其他变量取期望，再对 } x_i \text{ 取期望}}
+\]
+把 $H(q_i) = -\mathbb{E}_{q_i}[\log q_i]$ 代入，变成：
+\[
+  \min_{q_i}\; \mathbb{E}_{q_i}\!\big[\log q_i(x_i)\big] - \mathbb{E}_{q_i}\!\big[\mathbb{E}_{q_{-i}}[E(x)]\big]
+\]
+定义一个"目标分布" $\hat{p}_i(x_i) \propto \exp\!\big(\mathbb{E}_{q_{-i}}[E(x)]\big)$，上式变成：
+\[
+  \min_{q_i}\; \mathbb{E}_{q_i}\!\big[\log q_i - \log \hat{p}_i\big] = \mathrm{KL}(q_i \| \hat{p}_i)
+\]
+KL 最小 $= 0$，当且仅当 $q_i = \hat{p}_i$。所以最优解是：
+\[
+  \boxed{q_i(x_i) \propto \exp\!\Big(\mathbb{E}_{q_{-i}}[E(x)]\Big)}
+\]
+
+\subsubsection{$E(x)$ 展开：pairwise UGM}
+
+在 pairwise UGM 里，$E(x) = \sum_{i \sim j} \phi_{ij}(x_i, x_j)$（所有边上的 potential 加起来）。
+
+对 $q_{-i}$（除 $x_i$ 外的所有变量）取期望时，跟 $x_i$ 无关的项变成常数（被 $\propto$ 吸收）。剩下的只有 $x_i$ 的邻居 $N(i)$ 那些项：
+\[
+  \mathbb{E}_{q_{-i}}[E(x)] = \sum_{j \in N(i)} \mathbb{E}_{q_j}\!\big[\phi_{ij}(x_i, x_j)\big] + \text{const}
+\]
+所以：
+\[
+  \boxed{q_i(x_i) \propto \exp\!\bigg(\sum_{j \in N(i)} \mathbb{E}_{q_j}\!\big[\phi_{ij}(x_i, x_j)\big]\bigg)}
+\]
+
+\subsubsection{直觉}
+
+每个变量 $x_i$ 的最优分布，只取决于它\textbf{邻居的平均 potential}。不需要知道邻居的真实值，只需要它们在当前 $q_j$ 下的期望。这就是 ``mean field'' --- 用邻居的 mean 代替邻居的真实值。
+
+跟 Gibbs sampling 很像（也是一次更新一个变量），但 CAVI 是\textbf{确定性的}（设成期望值），Gibbs sampling 是\textbf{随机的}（从 conditional 里采样）。
+
+\subsection{Inner vs.\ Outer Approximation}
+
+Slides 里还提到了另一种思路：\textbf{outer approximation}。
+
+\begin{center}
+\begin{tabular}{l|l|l}
+  & \textbf{Inner (Physics)} & \textbf{Outer (CS)} \\
+  \hline
+  思路 & 在更\textbf{小}的 $\mathcal{Q}$ 里 optimize & 在更\textbf{大}的集合里 optimize \\
+  结果 & $\leq \log Z$（下界） & $\geq \log Z$（上界） \\
+  例子 & Mean-field & Linear programming relaxation \\
+  类比 & ``我只看简单的分布'' & ``我放宽约束让问题更好解'' \\
+\end{tabular}
+\end{center}
+
+Inner approximation 搜索范围小了，所以最优值 $\leq$ 真实值（下界）。Outer approximation 搜索范围大了（包含了一些不是合法 distribution 的东西），所以最优值 $\geq$ 真实值（上界）。
+
+这门课重点关注 inner approximation（mean-field），后面的 EM 和 VAE 都建立在 ELBO（inner approximation 给出的下界）之上。
+
 
 % ============================================================
 \section{Expectation-Maximization (EM)}
@@ -313,4 +648,5 @@ With the $Z$ problem in mind, the course offers two categories of solutions:
 % ============================================================
 
 
+\end{CJK}
 \end{document}

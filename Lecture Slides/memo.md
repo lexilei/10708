@@ -12,7 +12,7 @@
 | 8  | Graph Neural Networks | |
 | 9  | MCMC Introduction | |
 | 11 | Advanced MCMC | |
-| 13 | Variational Inference | |
+| 13 | Variational Inference | 进行中 |
 | 15 | EM Algorithm | |
 | 16 | VAE + BBVI | |
 | 17 | GAN | |
@@ -37,13 +37,45 @@ Score 线:        L19 (Score Matching / EBM)
 - L19 的动机: MLE 训练 EBM 需要算 ∇log Z (需要 MCMC 采样) → score matching 完全绕开 Z
 - **建议学习顺序**: L13 → L15 → L16 → L17 → L18 → L11 → L19
 
+## 已学内容 (2026-03-31)
+
+### Prerequisites (notes.tex pp.1-6)
+- [x] Inference = 向模型提问（conditional, marginal, MAP, sampling, Z）
+- [x] Marginal vs conditional（conditional = 两个 marginal 做除法）
+- [x] MAP vs MLE（MAP 找变量 x，MLE 找参数 θ；一个是 inference，一个是 learning）
+- [x] Conditional vs posterior（posterior 是 Bayesian update 下的特殊 conditional）
+- [x] Bayesian reasoning（prior 是对参数的信念；wrong prior 可纠正，wrong model 不行）
+- [x] Partition function（让概率加起来等于 1 的除数；变量多了指数级 intractable）
+- [x] Likelihood（给定参数，数据有多可能；分母里藏着 Z）
+
+### L13 Variational Inference (notes.tex pp.7-12)
+- [x] 和统计力学的对应（Boltzmann distribution, free energy, entropy）
+- [x] Free energy = ⟨E⟩ - TS，ELBO = -F
+- [x] 为什么平衡态是 Boltzmann distribution（max entropy under energy constraint）
+- [x] Boltzmann machine（用 Boltzmann distribution 作为概率模型的神经网络）
+- [x] Gibbs Variational Principle（log Z = max_q [H(q) + E_q[E(x)]]）
+- [x] 为什么两项都要（只要 E → MAP，只要 H → uniform）
+- [x] GVP 对任何分布成立，但有用性取决于 E(x) 好不好算和 Q 选得好不好
+- [x] KL divergence → ELBO 推导
+- [x] Evidence = 数据的概率 P(data)，ELBO 是它的 lower bound
+- [x] Mean-field approximation（假设变量独立，参数从 2^n 降到 n）
+- [x] CAVI（coordinate ascent，一次更新一个 q_i）
+- [x] Inner vs outer approximation（下界 vs 上界）
+
+### L13 待继续
+- [ ] Slides 后半部分的具体 example（pairwise UGM 上的 CAVI）
+- [ ] Outer relaxation 的细节
+
 ## TODO
 
-- [ ]
+- [ ] 把 prerequisites 部分改写成中英夹杂风格
 
 ## 重点 / 易混淆概念
 
--
+- MAP vs MLE：形式都是 argmax，但 MAP 找 x（inference），MLE 找 θ（learning）
+- E_slides = -E_physics（符号约定相反）
+- ELBO = -F（negative free energy）
+- GVP 永远成立 ≠ GVP 永远有用
 
 ## 解释风格
 
