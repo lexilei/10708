@@ -87,4 +87,11 @@ Score 线:        L19 (Score Matching / EBM)
 
 ## 考试相关
 
--
+- 期中 29/70（25% of total grade → 贡献 10.36%）
+- 文件在 `/midterm 1/`：Lex's solution, Bryan's solution, sample exam sol
+- 第一道解答题 (Q9) 是 systematic-scan Gibbs，特别 triggering
+- 成绩分配：HW 40%, Midterm 25%, Final 35%, Attendance 3% extra
+- HW2: 113.5/115（mean 109.25, median 111.5）
+- HW1: TBD, HW3: 已交未出分, HW4: 未出
+- Midterm review LaTeX 在 `/midterm 1/midterm_review.tex`
+- 学期 GPA（另外两门 A+ 和 A）：708 B- → 3.78, B → 3.89, C+ → 3.67

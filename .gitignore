@@ -8,6 +8,10 @@
 !/Lecture Slides/cheatsheet.tex
 !/Lecture Slides/cheatsheet.pdf
 !/Lecture Slides/memo.md
+!/midterm 1/
+/midterm 1/*
+!/midterm 1/midterm_review.tex
+!/midterm 1/midterm_review.pdf
 
 # LaTeX auxiliary files
 *.aux
