@@ -26,6 +26,73 @@
 \newpage
 
 % ============================================================
+\section*{Math Foundations}
+% ============================================================
+
+\subsection*{概率基础}
+
+\textbf{联合分布}：$p(x, y)$ = $x$ 和 $y$ 同时取某个值的概率。
+
+\textbf{Marginal}：对不关心的变量求和掉。$p(x) = \sum_y p(x, y)$。
+
+\textbf{Conditional}：固定一个变量的值。$p(x \mid y) = \frac{p(x, y)}{p(y)}$。
+
+\textbf{Chain rule}：$p(x, y) = p(x) \cdot p(y \mid x) = p(y) \cdot p(x \mid y)$。
+
+\textbf{Bayes rule}：从 chain rule 直接推出：$p(y \mid x) = \frac{p(x \mid y)\, p(y)}{p(x)}$。
+
+\textbf{Independence}：$x \perp y$ 当且仅当 $p(x, y) = p(x)\, p(y)$。
+
+\textbf{Conditional independence}：$x \perp y \mid z$ 当且仅当 $p(x, y \mid z) = p(x \mid z)\, p(y \mid z)$。
+
+\subsection*{期望}
+
+$\mathbb{E}_q[f(x)] = \sum_x q(x)\, f(x)$（离散），$= \int q(x)\, f(x)\, dx$（连续）。
+
+物理写法：$\langle f(x) \rangle = \mathbb{E}[f(x)]$，尖括号 = 期望。
+
+\subsection*{Log 和 Exp 的常用性质}
+
+\begin{itemize}[nosep]
+  \item $\log(ab) = \log a + \log b$（乘法变加法，这就是为什么 MLE 取 log）
+  \item $\log \frac{a}{b} = \log a - \log b$
+  \item $\log \exp(x) = x$，$\exp(\log x) = x$
+  \item $\frac{d}{dx} \log x = \frac{1}{x}$，$\frac{d}{dx} e^x = e^x$
+  \item $p \propto \exp(E)$ 意思是 $p = \frac{1}{Z}\exp(E)$（$\propto$ = 差一个归一化常数）
+\end{itemize}
+
+\subsection*{Entropy}
+
+$H(q) = -\sum_x q(x) \log q(x) = -\mathbb{E}_q[\log q(x)]$。衡量分布的"不确定度"。
+
+\begin{itemize}[nosep]
+  \item $q$ 集中在一个点 $\to$ $H = 0$（完全确定）
+  \item $q$ 是 uniform $\to$ $H$ 最大（最不确定）
+  \item 独立分布的 entropy 可加：$H(q_1 q_2) = H(q_1) + H(q_2)$
+\end{itemize}
+
+\subsection*{KL Divergence}
+
+$\mathrm{KL}(q \| p) = \sum_x q(x) \log \frac{q(x)}{p(x)} = \mathbb{E}_q[\log q - \log p] = -H(q) - \mathbb{E}_q[\log p]$。
+
+\begin{itemize}[nosep]
+  \item 衡量 $q$ 和 $p$ 之间的"距离"（但不对称：$\mathrm{KL}(q\|p) \neq \mathrm{KL}(p\|q)$）
+  \item $\mathrm{KL}(q\|p) \geq 0$，等号当且仅当 $q = p$
+  \item $\mathrm{KL}(q\|p)$：mode-seeking（$q$ 集中在 $p$ 的一个峰上）
+  \item $\mathrm{KL}(p\|q)$：mode-covering（$q$ 覆盖 $p$ 的所有峰）
+\end{itemize}
+
+\subsection*{Lagrange Multiplier}
+
+想 maximize $f(x)$ 但有约束 $g(x) = 0$。构造 $L = f(x) + \lambda \cdot g(x)$，对 $x$ 和 $\lambda$ 都求导令其为零。$\lambda$ 叫 Lagrange multiplier。
+
+例子：maximize $H(q) = -\sum q_i \log q_i$ subject to $\sum q_i = 1$。
+
+$L = -\sum q_i \log q_i + \lambda(\sum q_i - 1)$，对 $q_i$ 求导：$-\log q_i - 1 + \lambda = 0$，解出 $q_i = e^{\lambda - 1}$ = 常数 $\to$ uniform distribution。符合直觉：entropy 在 uniform 时最大。
+
+\newpage
+
+% ============================================================
 \section*{Prerequisites: Key Concepts}
 % ============================================================
 
@@ -762,14 +829,70 @@ Energy 项只需要 clique marginals，已经搞定了。但 entropy $H(\tilde{q
 \[
   H(q) \approx \sum_{i \sim j} H(q_{ij}) - \sum_i (d_i - 1)\, H(q_i)
 \]
-即使图不是 tree 也这么算。这叫 \textbf{Bethe entropy approximation}。加上 energy 项就是 \textbf{Bethe free energy}，跟 belief propagation 算法有直接联系。
+即使图不是 tree 也这么算。这叫 \textbf{Bethe entropy approximation}（以物理学家 Hans Bethe 命名）。加上 energy 项就是 \textbf{Bethe free energy}。
+
+\subsubsection{Bethe relaxation 和 Belief Propagation 的联系（结论）}
+
+\noindent\fbox{\parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule}{%
+\textbf{Bethe relaxation 的 stationary points = Belief Propagation 的 fixed points。}
+
+跑 loopy BP（在有 loop 的图上硬跑 belief propagation）等价于在找 Bethe free energy 的 stationary point。这给了 loopy BP 一个理论依据 --- 之前 BP 在 tree 上是精确的，在有 loop 的图上硬跑没有理论保证，现在知道它其实在 optimize Bethe free energy。
+
+Caveats：(1) 可能不收敛；(2) 即使收敛，也只到 stationary point，不一定是全局最优。
+}}
+
+\subsubsection{Lagrange Multiplier 是什么（30 秒版）}
+
+你想 maximize $f(x)$ 但有约束 $g(x) = 0$。构造新函数 $L = f(x) + \lambda \cdot g(x)$，对 $x$ 和 $\lambda$ 都求导令其为零。$\lambda$ 叫 Lagrange multiplier --- 它"自动"帮你处理约束。
+
+"自动"的意思是：\textbf{对 $\lambda$ 求导天然给你约束本身}。比如 maximize $H(q) = -\sum q_i \log q_i$ subject to $\sum q_i = 1$：
+
+不用 Lagrange multiplier：手动把 $q_n = 1 - q_1 - \cdots - q_{n-1}$ 代入 $H$，再对 $n-1$ 个自由变量求导。变量多了很烦。
+
+用 Lagrange multiplier：$L = -\sum q_i \log q_i + \lambda(\sum q_i - 1)$，对每个变量求导令其为零。为什么？因为最优点 = 所有方向都不再增大或减小的点（stationary point）。每个变量是一个方向，$\frac{\partial L}{\partial q_i} = 0$ 意味着沿 $q_i$ 方向不动了。所有偏导都为零 = 所有方向都不动 = 最优点。跟一元函数 $f'(x)=0$ 找极值一样，多元就是对每个变量分别求偏导。具体：
+\begin{itemize}[nosep]
+  \item 对 $q_i$：$-\log q_i - 1 + \lambda = 0$ $\to$ $q_i = e^{\lambda - 1}$ = 常数
+  \item 对 $\lambda$：$\sum q_i - 1 = 0$（约束被"还原"了）
+\end{itemize}
+不需要手动代入，约束通过 $\lambda$ 自己跑出来。本质是把 constrained optimization 变成 unconstrained optimization --- 约束被编码进了 $\lambda$。
+
+\subsubsection{推导：Bethe relaxation $\to$ Belief Propagation}
+
+Maximize Bethe free energy，约束：(1) 每个 $q_i$ 加起来等于 1；(2) 相邻 marginal 一致 $\sum_{x_i} q_{ij}(x_i, x_j) = q_j(x_j)$。
+
+Lagrangian（objective + 约束 $\times$ multiplier）：
+\[
+  L = \sum_{i \sim j} \mathbb{E}_{q_{ij}}[\phi_{ij}] + H_{\text{Bethe}}(q) + \sum_i \lambda_i\Big(\sum_{x_i} q_i - 1\Big) + \sum_{i \sim j}\sum_{x_j} \lambda_{ij}(x_j)\Big(\sum_{x_i} q_{ij} - q_j\Big)
+\]
+
+对 $q_{ij}$ 求导令其为零：
+\[
+  q_{ij}(x_i, x_j) \propto q_i(x_i)\, q_j(x_j)\, \exp\!\big(\phi_{ij}(x_i, x_j) + \lambda_{ij}(x_j) + \lambda_{ji}(x_i)\big)
+\]
+
+对 $q_i$ 求导令其为零：
+\[
+  q_i(x_i) \propto \exp\!\Big(-\sum_{j \sim i} \lambda_{ji}(x_i)\Big)
+\]
+
+代入 consistency 约束 $\sum_{x_i} q_{ij} = q_j$ 整理后得到：
+\[
+  \exp\!\big(-\lambda_{ji}(x_i)\big) \propto \sum_{x_j} \exp\!\Big(-\sum_{k \sim j,\, k \neq i} \lambda_{kj}(x_j) + \phi_{ij}(x_{ij})\Big)
+\]
+
+定义 $m_{j \to i}(x_i) = \exp(-\lambda_{ji}(x_i))$，上式变成：
+\[
+  \boxed{m_{j \to i}(x_i) \propto \sum_{x_j} \exp\!\big(\phi_{ij}(x_i, x_j)\big) \prod_{k \in N(j) \setminus i} m_{k \to j}(x_j)}
+\]
+
+这就是 \textbf{belief propagation 的 message passing update}。
 
 \begin{center}
 \begin{tabular}{l|l|l}
   图结构 & Entropy 怎么算 & Outer relaxation 精度 \\
   \hline
   Tree & Chain rule 精确分解 & \textbf{精确} \\
-  有 loop & Bethe approximation（硬用 tree 公式） & 近似（上界） \\
+  有 loop & Bethe approximation（硬用 tree 公式） & 近似（见下面注意） \\
 \end{tabular}
 \end{center}
 
@@ -782,17 +905,128 @@ Energy 项只需要 clique marginals，已经搞定了。但 entropy $H(\tilde{q
 % Lecture 15
 % ============================================================
 
-\subsection{概念概览}
+\subsection{从 L13 到 L15：同一个框架，不同的目标}
+
+L13 里我们对整个分布 $p(x)$ 用 GVP，目标是算 $\log Z$。
+
+L15 说：$p(z|x)$ 也是一个分布（over latent variable $z$，给定 observed data $x$），我们可以把\textbf{同样的 GVP} 用在它上面。把 $p(z|x) = \frac{p(z,x)}{p(x)}$ 代入：
+
+\begin{center}
+\begin{tabular}{l|l|l}
+  & \textbf{L13 (算 $\log Z$)} & \textbf{L15 (latent variable model)} \\
+  \hline
+  分布 & $p(x) = \frac{1}{Z}\exp(E(x))$ & $p(z|x) = \frac{p(z,x)}{p(x)}$ \\[4pt]
+  ``Energy'' & $E(x)$ & $\log p(z,x)$ \\[4pt]
+  ``Partition function'' & $Z$ & $p(x)$（evidence） \\[4pt]
+  $q$ 在逼近什么 & $p(x)$ & $p(z|x)$（posterior） \\
+\end{tabular}
+\end{center}
+
+推导跟 L13 一模一样。从 KL 的定义出发：
+\begin{align}
+  \mathrm{KL}(q(z|x) \| p(z|x))
+  &= \mathbb{E}_q[\log q(z|x)] - \mathbb{E}_q[\log p(z|x)] \notag \\
+  &= \mathbb{E}_q[\log q(z|x)] - \mathbb{E}_q\!\left[\log \frac{p(z,x)}{p(x)}\right]
+  \quad\text{（代入 $p(z|x) = \frac{p(z,x)}{p(x)}$）} \notag \\
+  &= \mathbb{E}_q[\log q(z|x)] - \mathbb{E}_q[\log p(z,x)] + \log p(x)
+  \quad\text{（$\log p(x)$ 跟 $z$ 无关，提出来）} \notag \\
+  &= -H(q) - \mathbb{E}_q[\log p(z,x)] + \log p(x) \notag
+\end{align}
+移项得到：
+\[
+  \boxed{\log p(x) = \underbrace{H\big(q(z|x)\big) + \mathbb{E}_{q(z|x)}[\log p(z,x)]}_{\text{ELBO}} + \mathrm{KL}\big(q(z|x) \| p(z|x)\big)}
+\]
+
+\subsubsection{对比：L13 的推导}
+
+L13 里对 $p(x) = \frac{1}{Z}\exp(E(x))$ 做完全一样的事：
+\begin{align}
+  \mathrm{KL}(q \| p)
+  &= \mathbb{E}_q[\log q(x)] - \mathbb{E}_q[\log p(x)] \notag \\
+  &= \mathbb{E}_q[\log q(x)] - \mathbb{E}_q[E(x) - \log Z]
+  \quad\text{（代入 $p(x) = \frac{1}{Z}\exp(E(x))$）} \notag \\
+  &= -H(q) - \mathbb{E}_q[E(x)] + \log Z \notag
+\end{align}
+移项：$\log Z = H(q) + \mathbb{E}_q[E(x)] + \mathrm{KL}(q\|p)$。
+
+两个推导的手法完全一样 --- 都是展开 KL，代入分布的定义，移项。区别只是代入的东西不同：
+
+\begin{center}
+\begin{tabular}{l|l|l}
+  & L13 & L15 \\
+  \hline
+  代入 & $\log p(x) = E(x) - \log Z$ & $\log p(z|x) = \log p(z,x) - \log p(x)$ \\
+  提出来的常数 & $\log Z$ & $\log p(x)$ \\
+\end{tabular}
+\end{center}
+
+这个 ELBO 同时做两件事：
+\begin{itemize}
+  \item 它是 $\log p(x)$（log-evidence）的\textbf{下界} --- 可以当 likelihood 的替代品来 maximize
+  \item Maximize ELBO = minimize $\mathrm{KL}(q \| p)$ = 让 $q$ 逼近 posterior $p(z|x)$
+\end{itemize}
+
+\subsection{EM 算法}
 
 你有 latent variable $z$（观察不到）和 data $x$。想做 MLE：$\max_\theta \log p_\theta(x)$。但 $\log p_\theta(x) = \log \sum_z p_\theta(x,z)$，这个 sum intractable。
 
 EM 的做法：用 ELBO 作为 $\log p(x)$ 的替代品，然后交替两步：
 \begin{itemize}
-  \item \textbf{E-step}：固定 $\theta$，找最优的 $q(z)$ 来逼近 posterior $p(z|x)$（这就是 VI）
+  \item \textbf{E-step}：固定 $\theta$，找最优的 $q(z)$ 来逼近 posterior $p_\theta(z|x)$（这就是 VI）
   \item \textbf{M-step}：固定 $q$，更新 $\theta$ 来 maximize ELBO
 \end{itemize}
 
-就是对 ELBO 做 coordinate ascent：一步优化 $q$，一步优化 $\theta$。
+就是对 ELBO 做 coordinate ascent：一步优化 $q$（inference），一步优化 $\theta$（learning）。这也是为什么说"learning 的每一步里面都要做 inference"。
+
+注意 slides 里的一个重要区分：
+\begin{itemize}
+  \item 如果 $\mathcal{Q}$ 是\textbf{所有分布}（infinitely rich）：E-step 的最优解就是真正的 posterior $q = p_\theta(z|x)$。这叫 \textbf{EM}。
+  \item 如果 $\mathcal{Q}$ 是一个\textbf{受限的 family}（比如 mean-field）：E-step 只能找到 posterior 的近似。这叫 \textbf{variational inference}（或 variational EM）。
+\end{itemize}
+
+每一步都不会让 ELBO 变差（因为是 maximize），所以 EM 保证\textbf{单调递增}。但不保证到全局最优 --- 可能卡在 local minimum。
+
+\subsection{KL$(q\|p)$ vs KL$(p\|q)$：两种 divergence 的行为}
+
+Slides 里有一个很重要的对比。真实 posterior $p(z|x)$（绿色）可能是一个复杂的多峰分布，而 $\mathcal{Q}$ 里只有简单的分布（比如单个 Gaussian，红色）。
+
+\begin{itemize}
+  \item \textbf{KL$(q\|p)$}（VI 用的，叫 ``variational'' KL）：$q$ 在 $p$ 为零的地方会被\textbf{严重惩罚}。所以 $q$ 会避开 $p$ 为零的区域 $\to$ $q$ 倾向于\textbf{集中在 $p$ 的一个 mode 上}，变得 too compact（太紧凑）。
+  \item \textbf{KL$(p\|q)$}（另一种，叫 ``ML'' KL）：$q$ 在 $p$ 不为零的地方必须\textbf{也不为零}。所以 $q$ 会试图覆盖 $p$ 的所有 mode $\to$ $q$ 变得 too spread（太分散），在 mode 之间的低概率区域也有概率。
+\end{itemize}
+
+一句话：\textbf{KL$(q\|p)$ mode-seeking（找一个峰），KL$(p\|q)$ mode-covering（覆盖所有峰）。}这解释了为什么 VAE 生成模糊图片（后面 L16 会详细讲）。
+
+\subsection{Example: Mixture of Gaussians (GMM)}
+
+最经典的 latent variable model。数据 $x$ 来自 $K$ 个 Gaussian 的混合：
+\[
+  p(\mathbf{x}) = \sum_{k=1}^{K} \pi_k \,\mathcal{N}(\mathbf{x} \mid \mu_k, \Sigma_k)
+\]
+其中 $\pi_k$ 是 mixing coefficient（$\sum_k \pi_k = 1$），latent variable $z \in \{1, \dots, K\}$ 表示"这个数据点来自第几个 Gaussian"。
+
+\subsubsection{E-step：Soft assignment}
+
+固定参数 $\theta = (\mu_k, \Sigma_k, \pi_k)$，对每个数据点 $x_i$ 算 posterior：
+\[
+  q_i(z = k | x_i) = p_\theta(z = k | x_i) \propto \pi_k \cdot \mathcal{N}(x_i \mid \mu_k, \Sigma_k)
+\]
+
+直觉：$q_i(z = k | x_i)$ 是"数据点 $x_i$ 属于第 $k$ 个 cluster 的概率"。离 $\mu_k$ 越近，$q_i(k)$ 越大。这是 K-means 的 \textbf{soft 版本} --- K-means 是 hard assignment（每个点只属于一个 cluster），EM 是 soft assignment（每个点以不同概率属于每个 cluster）。
+
+\subsubsection{M-step：Weighted average}
+
+固定 $q_i$，更新参数。对 spherical Gaussian（$\Sigma_k = I_d$），$\mu_k$ 的更新是：
+\[
+  \mu_k = \frac{\sum_{i=1}^{n} q_i(z = k | x_i) \cdot x_i}{\sum_{i=1}^{n} q_i(z = k | x_i)}
+\]
+
+直觉：新的 cluster center $\mu_k$ 是所有数据点的\textbf{加权平均}，权重就是"这个点属于 cluster $k$ 的概率"。离 cluster $k$ 越近的点权重越大。
+
+\vspace{0.3em}
+\noindent\fbox{\parbox{\dimexpr\textwidth-2\fboxsep-2\fboxrule}{%
+\textbf{EM for GMM = Soft K-means。}K-means 交替做 hard assignment + update centers。EM 交替做 soft assignment + weighted update。K-means 是 EM 的特例（$\Sigma_k = \epsilon I$ 且 $\epsilon \to 0$ 时 soft assignment 退化为 hard assignment）。
+}}
 
 % ============================================================
 \section{Variational Autoencoders (VAE)}
