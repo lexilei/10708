@@ -85,6 +85,13 @@ Score 线:        L19 (Score Matching / EBM)
 - 不要跳步
 - LaTeX 中英夹杂：中文行文 + 英文 terminology，风格贴近对话
 
+## 期末备考策略
+
+- 不要通读 PPT — motivation/examples 不考
+- 定义必须精确默写 — d-separation, detailed balance, stationarity, treewidth...这些是考试构造证明的原材料
+- 不背证明，但练证明 — slides 上的具体证明步骤不考，但要能从定义出发在新情境下自己推
+- 对每个算法问"什么时候 break" — 这就是 T/F 题和 Q10(d) 考的东西
+
 ## 考试相关
 
 - 期中 29/70（25% of total grade → 贡献 10.36%）

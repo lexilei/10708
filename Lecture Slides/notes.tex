@@ -1033,13 +1033,111 @@ Slides 里有一个很重要的对比。真实 posterior $p(z|x)$（绿色）可
 % Lecture 16
 % ============================================================
 
-\subsection{概念概览}
+\subsection{从 EM 到 VAE：什么问题需要解决}
 
-EM 的问题：E-step 要对每个数据点单独做 VI，太慢。
+EM 的 E-step 对每个数据点 $x_i$ 单独做 VI（找 $q_i(z|x_i)$）。数据量大的时候太慢。
 
-VAE 的 idea：用一个神经网络 $q_\phi(z|x)$ 直接把 $x$ 映射到 $q$（叫 \textbf{amortized inference} --- 一个网络处理所有数据点，不用每个单独优化）。然后 $\theta$ 和 $\phi$ 一起用 gradient descent 训练。
+VAE 的 idea：用一个神经网络 $q_\phi(z|x)$（encoder）直接把 $x$ 映射到 $q$。\textbf{一个网络处理所有数据点}，不用每个单独优化。这叫 \textbf{amortized inference}（"摊销"推断）。
 
-难点：ELBO 里有 $\mathbb{E}_{z \sim q}[\cdot]$，怎么对采样求导？$\to$ \textbf{Reparameterization trick}：把 $z \sim q_\phi$ 写成 $z = \mu_\phi + \sigma_\phi \cdot \epsilon$，$\epsilon \sim \mathcal{N}(0,1)$，这样 gradient 就能穿过去了。
+\begin{definition}[Amortized Inference]
+用一个参数化的网络 $q_\phi(z|x)$ 代替逐数据点的 optimization。所有 $x_i$ 共享同一个 $\phi$，通过 gradient descent 训练。
+\end{definition}
+
+\subsection{VAE 的结构}
+
+两个网络：
+\begin{itemize}
+  \item \textbf{Decoder}（generative model）$p_\theta(x|z)$：给定 latent $z$，生成 $x$。参数 $\theta$。方向：$z \to x$。
+  \item \textbf{Encoder}（approximate posterior）$q_\phi(z|x)$：给定 $x$，推断 $z$ 的分布。参数 $\phi$。方向：$x \to z$。
+\end{itemize}
+
+两个都参数化为 Gaussian：$q_\phi(z|x) = \mathcal{N}(\mu_\phi(x), \Sigma_\phi(x))$，其中 $\mu_\phi$ 和 $\Sigma_\phi$ 是神经网络的输出。
+
+Training objective 就是 ELBO（跟 L15 一样）：
+\[
+  \max_{\theta, \phi} \sum_x \mathbb{E}_{h \sim q_\phi(h|x)} \log \frac{p_\theta(x, h)}{q_\phi(h|x)}
+\]
+
+\subsection{ELBO 的两种理解}
+
+把 ELBO 展开：
+\[
+  \underbrace{\mathbb{E}_{q_\phi(z|x)}[\log p_\theta(x|z)]}_{\text{Reconstruction error}} - \underbrace{\mathrm{KL}(q_\phi(z|x) \| p(z))}_{\text{Regularization towards prior}}
+\]
+
+\begin{itemize}
+  \item 第一项：encoder 把 $x$ 编码成 $z$，decoder 从 $z$ 重建 $x$，重建得越好这项越大（像 autoencoder）
+  \item 第二项：$q_\phi(z|x)$ 不能离 prior $p(z)$ 太远（regularization，防止 encoder 学成 identity）
+\end{itemize}
+
+这就是为什么叫 ``autoencoder'' --- encode $x \to z$，decode $z \to x$，加了 variational regularization。
+
+\subsection{核心难点：怎么对 $\phi$ 求导}
+
+ELBO 里有 $\mathbb{E}_{h \sim q_\phi}[\cdot]$。对 $\theta$ 求导很简单（$q_\phi$ 不依赖 $\theta$，导数可以直接穿过期望）。
+
+但对 $\phi$ 求导有问题：\textbf{期望本身是关于 $q_\phi$ 的，而 $q_\phi$ 依赖 $\phi$}。你不能直接把 $\nabla_\phi$ 穿过 $\mathbb{E}_{q_\phi}$。
+
+两种解决方案：
+
+\subsubsection{方案 1：REINFORCE estimator}
+
+\begin{definition}[REINFORCE / Score-based estimator]
+\[
+  \nabla_\phi \,\mathbb{E}_{h \sim q_\phi} [f(h)] = \mathbb{E}_{h \sim q_\phi}\!\big[f(h) \cdot \nabla_\phi \log q_\phi(h)\big]
+\]
+\end{definition}
+
+右边是一个期望，可以用 Monte Carlo 估计（采几个 $h$ 算平均）。不需要 $f$ 对 $h$ 可导，所以适用于 discrete 和 continuous 分布。
+
+\textbf{什么时候 break}：variance 非常高。$f(h) \cdot \nabla_\phi \log q_\phi(h)$ 的方差可能很大，需要很多 samples 才能得到稳定的 gradient 估计。实际中往往不好用。
+
+\subsubsection{方案 2：Reparameterization trick（VAE 用的）}
+
+\begin{definition}[Reparameterization trick]
+把从 $q_\phi$ 采样变成一个\textbf{确定性变换} + 从固定分布采样：
+\[
+  z = \mu_\phi(x) + \sigma_\phi(x) \cdot \epsilon, \qquad \epsilon \sim \mathcal{N}(0, I)
+\]
+\end{definition}
+
+现在 $\epsilon$ 不依赖 $\phi$，所以：
+\[
+  \nabla_\phi \,\mathbb{E}_{q_\phi}[f(z)] = \nabla_\phi \,\mathbb{E}_{\epsilon \sim \mathcal{N}(0,I)}[f(\mu_\phi + \sigma_\phi \cdot \epsilon)] = \mathbb{E}_\epsilon\!\big[\nabla_\phi f(\mu_\phi + \sigma_\phi \cdot \epsilon)\big]
+\]
+
+$\nabla_\phi$ 穿过 $\mathbb{E}_\epsilon$ 了（因为 $\epsilon$ 的分布不依赖 $\phi$），然后用 chain rule + backprop 算。
+
+\textbf{什么时候 break}：需要 $z$ 是 continuous 的（因为要对 $z$ 求导）。不适用于 discrete latent variables。
+
+\subsubsection{REINFORCE vs Reparameterization}
+
+\begin{center}
+\begin{tabular}{l|l|l}
+  & \textbf{REINFORCE} & \textbf{Reparameterization} \\
+  \hline
+  适用 & Discrete + continuous & 只 continuous \\
+  Variance & 高（需要 variance reduction） & 低 \\
+  需要 $\nabla_z$ & 不需要 & 需要（$f$ 对 $z$ 可导） \\
+  实际中 & BBVI 用 & VAE 用 \\
+\end{tabular}
+\end{center}
+
+\subsection{VAE 什么时候 break：blurry samples}
+
+VAE 生成的图片往往模糊。原因（slides 给了三个假说）：
+
+\begin{enumerate}
+  \item \textbf{KL(q$\|$p) mode-seeking}：VI 用的是 $\mathrm{KL}(q\|p)$，$q$ 倾向于集中在 $p$ 的一个 mode 上，太紧凑。
+  \item \textbf{Poor posterior}：$q_\phi(z|x)$ 是 Gaussian --- 表达力弱，无法建模 multimodal posterior。
+  \item \textbf{MLE 鼓励 averaging}：MLE 等价于 minimize $\mathrm{KL}(p_{data}\|p_\theta)$（mode-covering），$p_\theta$ 倾向于在多个 mode 之间平均 $\to$ 生成的图片是多个清晰图片的"平均" $\to$ 模糊。
+\end{enumerate}
+
+这就是 L17 (GAN) 的动机 --- 放弃 likelihood，用 adversarial training 代替。
+
+\subsection{BBVI: Black-Box Variational Inference}
+
+CAVI 的问题：每换一个模型就要重新推导 update。BBVI 的目标：只要你能 (1) evaluate $\log p_\theta(x,h)$ 和 $\log q_\phi(h|x)$，(2) 从 $q_\phi$ 采样，就能自动做 VI。用 REINFORCE 或 reparameterization trick 估计 gradient，不需要 model-specific 推导。
 
 % ============================================================
 \section{Generative Adversarial Networks (GAN)}
@@ -1064,11 +1162,73 @@ L18 是 GAN 的各种应用和变体（Conditional GAN、AC-GAN 等）。
 % Lecture 19
 % ============================================================
 
-\subsection{概念概览}
+\subsection{动机：MLE for EBM 需要 $\nabla_\theta \log Z$}
 
-MLE 需要 $\nabla_\theta \log p_\theta(x)$，里面有 $\nabla \log Z$ 很烦。
+对 energy-based model $p_\theta(x) \propto \exp(-E_\theta(x))$，MLE 的 gradient 是：
+\[
+  \nabla_\theta \log p_\theta(x) = -\nabla_\theta E_\theta(x) - \nabla_\theta \log Z_\theta
+\]
+第一项好算，第二项 $\nabla_\theta \log Z_\theta = \mathbb{E}_{p_\theta}[-\nabla_\theta E_\theta(x)]$ 需要从 $p_\theta$ 采样（MCMC）--- 每一步 gradient descent 都要跑一次 MCMC，太贵。
 
-Score matching 的 idea：不匹配分布本身，匹配它的 \textbf{score function} $\nabla_x \log p(x)$。因为 $\nabla_x \log \frac{e^{-E(x)}}{Z} = -\nabla_x E(x)$，$Z$ 是常数，求导直接消掉了。
+\subsection{Score Function 和为什么 $Z$ 消失}
+
+\begin{definition}[Score Function]
+\[
+  s(x) = \nabla_x \log p(x) \quad (\mathbb{R}^d \to \mathbb{R}^d)
+\]
+注意是对 $x$ 求导，不是对 $\theta$。在每个点 $x$ 给出一个向量，指向分布密度增大最快的方向。
+\end{definition}
+
+为什么 $Z$ 消失：$\nabla_x \log p_\theta(x) = \nabla_x(-E_\theta(x) - \log Z_\theta) = -\nabla_x E_\theta(x)$。因为 $Z_\theta$ 不依赖 $x$，对 $x$ 求导时是常数，导数为零。
+
+\subsection{Score Matching Objective}
+
+不匹配分布本身，匹配 score function：
+\[
+  \min_\theta \;\mathbb{E}_{p_{data}}\!\big[\|\nabla_x \log p_\theta(x) - \nabla_x \log p_{data}(x)\|^2\big]
+\]
+
+问题：我们不知道 $\nabla_x \log p_{data}(x)$（我们只有数据样本，不知道 $p_{data}$ 的解析形式）。
+
+\subsection{Integration by Parts Trick}
+
+展开平方 $\|a - b\|^2 = \|a\|^2 + \|b\|^2 - 2\langle a, b\rangle$，第二项不依赖 $\theta$（扔掉），第一项好算。关键是第三项 $\mathbb{E}_{p_{data}}\langle \nabla_x \log p_\theta, \nabla_x \log p_{data}\rangle$ 包含未知的 $\nabla_x \log p_{data}$。
+
+用 integration by parts（向量版）消掉它：
+\[
+  \mathbb{E}_p\!\big[\langle f(x), \nabla_x \log p(x)\rangle\big] = -\mathbb{E}_p\!\big[\mathrm{div}\, f(x)\big], \quad \mathrm{div}\, f(x) = \sum_i \frac{\partial f_i}{\partial x_i}
+\]
+
+最终 loss（不含 $p_{data}$ 的 score）：
+\[
+  \boxed{\frac{1}{N}\sum_i \|s_\theta(x_i)\|^2 + 2\,\mathrm{Tr}\!\big(Ds_\theta(x_i)\big)}
+\]
+其中 $s_\theta(x) = \nabla_x \log p_\theta(x)$（用 neural net 参数化），$Ds_\theta$ 是 $s_\theta$ 的 Jacobian。
+
+\subsection{什么时候 break}
+
+\begin{enumerate}
+  \item \textbf{Jacobian 太贵}：$\mathrm{Tr}(Ds_\theta)$ 需要算 $d$ 个对角元素，每个要一次 backprop $\to$ $O(d)$ 倍开销。Sliced score matching 通过随机投影 $v$ 降到 $O(1)$。
+  \item \textbf{Low-density regions 的 score 不准}：loss 是 $\mathbb{E}_{p_{data}}[\cdot]$，在 $p_{data}$ 密度低的地方没有数据，所以 $s_\theta$ 在那里可以是任意的 --- 但 Langevin sampling 可能会经过那些区域。
+  \item \textbf{Langevin sampling 慢}：训练完后要采样需要跑 Langevin dynamics $x_{t+1} = x_t - \eta\, s_\theta(x) + \sqrt{2\eta}\,\xi$。多峰分布时 mode 之间有 energy barrier，mixing time 可能指数级。
+\end{enumerate}
+
+\subsection{Denoising Score Matching (DSM)}
+
+解决 low-density 和 slow mixing 的方法：\textbf{在多个 noise level 上做 score matching}（annealing）。
+
+对 $p_{data}$ 加不同程度的 Gaussian noise：$p_{\sigma_i, data}(x) = p_{data} * \mathcal{N}(0, \sigma_i I)$。
+
+$\sigma_1 > \sigma_2 > \cdots > \sigma_L$：噪声从大到小。大噪声 $\to$ 分布被"抹平"，low-density region 消失，score 好估计；小噪声 $\to$ 接近真实分布。
+
+DSM 的 loss 简化为（不需要 Jacobian）：
+\[
+  \boxed{\sum_i \lambda(\sigma_i)\, \mathbb{E}_{\tilde{x} \sim p_{data}} \mathbb{E}_{x \sim \mathcal{N}(\tilde{x}, \sigma_i^2 I)} \left\|s_\theta(x, i) - \frac{\tilde{x} - x}{\sigma_i^2}\right\|^2}
+\]
+
+直觉：$s_\theta$ 在学"从 noisy $x$ 指向 clean $\tilde{x}$ 的方向" --- 就是 denoising。
+
+采样：Annealed Langevin dynamics --- 从高 noise level 开始跑 Langevin，逐步降低到低 noise level。每一级用上一级的终点做 warm start。
 
 % ============================================================
 \section{Noise Contrastive Estimation (NCE)}
