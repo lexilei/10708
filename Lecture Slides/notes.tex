@@ -1221,38 +1221,342 @@ VAE 生成的图片往往模糊。原因（slides 给了三个假说）：
 
 \subsection{BBVI: Black-Box Variational Inference}
 
-CAVI 的问题：每换一个模型就要重新推导 update。BBVI 的目标：只要你能 (1) evaluate $\log p_\theta(x,h)$ 和 $\log q_\phi(h|x)$，(2) 从 $q_\phi$ 采样，就能自动做 VI。用 REINFORCE 或 reparameterization trick 估计 gradient，不需要 model-specific 推导。
+CAVI 的问题：每换一个模型就要重新推导 update（pairwise UGM 推一种、LDA 推一种、新模型再推一种）。BBVI 的目标：模型当成黑盒，算法不需要 peek inside。
+
+\textbf{核心 trick}：把 exact gradient 换成 stochastic estimate，估计只需要采样，不需要推导。
+
+\begin{center}
+\begin{tabular}{l|l|l}
+  & \textbf{怎么算 gradient} & \textbf{需要什么} \\
+  \hline
+  CAVI & 解析地解出 $q$ 的最优形式 & Model-specific 推导 \\
+  BBVI & REINFORCE / reparameterization 估计 & 能采样 + 能 evaluate log prob \\
+\end{tabular}
+\end{center}
+
+需要的能力：
+\begin{enumerate}[nosep]
+  \item Evaluate $\log p_\theta(x, h)$
+  \item Evaluate $\log q_\phi(h|x)$
+  \item 从 $q_\phi$ 采样
+  \item （Reparameterization 版本）能算梯度
+\end{enumerate}
+
+为什么不需要 model-specific 推导：因为通用 gradient estimator
+\[
+  \nabla_\phi\, \mathbb{E}_{q_\phi}[f(h)] \approx \frac{1}{N}\sum_i f(h_i) \cdot \nabla_\phi \log q_\phi(h_i)
+\]
+对\textbf{任何} $f$ 和 $q_\phi$ 都成立。只要采几个 $h_i$，算 $f$ 和 score，求平均。不依赖 $f$ 或 $q$ 的具体形式。
+
+代价：估计有 noise（variance 高），收敛比 CAVI 慢、不稳定。换来的是\textbf{通用性} --- 一个算法跑所有模型。工业界（PyMC, Pyro, Stan）用 BBVI 多，因为做研究时模型经常改，不可能每改一次手推几小时。
 
 % ============================================================
 \section{Generative Adversarial Networks (GAN)}
 % Lectures 17--18
 % ============================================================
 
-\subsection{概念概览}
+\subsection{动机：image distance is hard}
 
-VAE 生成的图片模糊（因为 $\mathrm{KL}(p\|q)$ 鼓励 mode averaging）。
+匹配图像分布很难，因为像素空间的距离 ≠ 语义距离（两张图在 pixel space 差很远但语义相同）。VAE 用 likelihood 训练相当于用 KL，是 ``strong metric''，导致模糊。
 
-GAN 的 idea：完全不算 likelihood。训练两个网络对抗：
+GAN 的核心 idea：\textbf{把 distance metric 也学出来。不固定一个 distance（比如 KL），用一个神经网络（discriminator）来定义 distance}。
+
+\subsection{GAN Paradigm}
+
 \begin{itemize}
-  \item \textbf{Generator}：生成假样本
-  \item \textbf{Discriminator}：分辨真假
+  \item \textbf{Generator} $g$：神经网络，把 noise $z \sim \mathcal{N}(0, I)$ 映射到 image $x = g(z)$。Generator 定义了一个分布 $P_g$。
+  \item \textbf{Discriminator} $f$：神经网络，输入图像，输出"是真还是假"。
 \end{itemize}
-Generator 越来越会骗，Discriminator 越来越会判，最终 Generator 学到真实分布。不需要 $Z$，不需要 ELBO。
 
-L18 是 GAN 的各种应用和变体（Conditional GAN、AC-GAN 等）。
+Game-theoretic：Generator 想 fool discriminator，Discriminator 想 beat generator。
+
+\subsection{DC-GAN (Goodfellow '14)}
+
+\begin{definition}[DC-GAN training loss]
+\[
+  \min_{g \in G} \max_{f \in F}\; \mathbb{E}_{x \sim p_{samples}}[\log f(x)] + \mathbb{E}_{x \sim P_g}[\log(1 - f(x))]
+\]
+\end{definition}
+
+$f \in [0, 1]$ 是 ``这是真样本的概率''。第一项希望 $f$ 对真样本输出高，第二项希望 $f$ 对假样本输出低 --- 就是 logistic loss 的 binary classifier。
+
+\textbf{推导 GAN 在优化什么}：固定 $g$，最优 $f$ 是
+\[
+  f^*(x) = \frac{p_{samples}(x)}{p_{samples}(x) + P_g(x)}
+\]
+代回 outer min：
+\[
+  \min_g \mathbb{E}_{p_{samples}} \log \frac{p_{samples}}{p_{samples} + P_g} + \mathbb{E}_{P_g} \log \frac{P_g}{p_{samples} + P_g}
+\]
+利用 Jensen-Shannon divergence 的定义 $\mathrm{JS}(P, Q) = \frac{1}{2}(\mathrm{KL}(P \| \frac{P+Q}{2}) + \mathrm{KL}(Q \| \frac{P+Q}{2}))$，整理得：
+\[
+  \boxed{\text{Training loss} = 2\,\mathrm{JS}(P_g, p_{samples}) - \log 4}
+\]
+
+JS 是 divergence ($\geq 0$，等号当 $P = Q$)，所以 JS$(P_g, P_{data}) = 0$ $\Rightarrow$ $P_g = P_{data}$。无限样本下能学到真实分布。
+
+\subsection{W-GAN (Arjovsky '17)}
+
+\begin{definition}[W-GAN training loss]
+\[
+  \min_{g \in G} \max_{f \in F}\; \big|\mathbb{E}_{P_g}[f] - \mathbb{E}_{p_{samples}}[f]\big|
+\]
+\end{definition}
+
+中间那项 $\max_{f \in F}|\mathbb{E}_{P_g}[f] - \mathbb{E}_{p_{samples}}[f]|$ 定义了一个 ``distance'' $d_F(P_{samples}, P_g)$ --- 由 discriminator class $F$ 来 specify。
+
+不同的 $F$ 给出不同的 distance：
+\begin{itemize}
+  \item $F = \{f : |f|_\infty \leq 1\}$：\textbf{Total variation distance}
+  \item $F = \{f : \mathrm{Lip}(f) \leq 1\}$：\textbf{Wasserstein-1 (earthmover) distance}
+\end{itemize}
+
+DC-GAN 是这个框架的特例：用 monotone $\phi = \log$ 套在 $f$ 上就得到 DC-GAN。
+
+\subsection{Choice of $F$ 的 tension}
+
+\textbf{Statistical considerations}：
+\begin{itemize}
+  \item Powerful $F$（大神经网络）：需要很多样本，loss with finite samples 跟 infinite samples 差很多
+  \item Weak $F$：metric 太弱，"很不一样"的分布看起来"很像"
+\end{itemize}
+
+\textbf{Algorithmic considerations}：
+\begin{itemize}
+  \item Powerful $F$：generator 的 gradient 可能 vanish
+  \item Weak $F$：metric 太弱
+\end{itemize}
+
+\subsection{什么时候 break：常见训练问题}
+
+\paragraph{先定义 support}
+
+\textbf{Support} of a distribution = 概率不为零的点的集合，$\text{supp}(P) = \{x : p(x) > 0\}$。
+
+\textbf{Support size} = 这个集合里有多少个不同的点（离散）或这个集合的"体积"（连续）。直观就是：\textbf{这个分布能产生多少种不同的东西}。
+
+\begin{center}
+\begin{tabular}{|l|l|}
+\hline
+分布 & Support size \\
+\hline
+公平骰子 & $6$ \\
+永远输出同一张图的 generator & $1$ \\
+MNIST 真实分布 & 巨大（理论无限） \\
+\hline
+\end{tabular}
+\end{center}
+
+在 GAN 里：generator $g$ 把 noise $z$ 映射到 image $x = g(z)$。当 $z$ 跑遍 latent space，$g(z)$ 遍历的所有图就是 $P_g$ 的 support。Support size 大 = generator 多样；support size 小 = generator 反复输出几张图（mode collapse）。注意 support size 跟概率无关，只看可能性——一张 99\% 概率 + 1000 张 1\% 概率，support size 是 1001。
+
+\begin{enumerate}
+  \item \textbf{Unstable training}：min-max 是 saddle point problem，比纯 minimization 不稳定。常见 instantiation: \textbf{cycling}（参数在最优点附近螺旋式发散，但平均值接近最优）
+  \item \textbf{Vanishing gradient}：discriminator 太强 $\to$ generator 的 gradient 趋于零。Less of a problem in modern GANs。
+  \item \textbf{Mode collapse}：generator 只覆盖 $P_{real}$ 的少数 mode。
+  \begin{itemize}
+    \item Statistical 解释：weak discriminator 区分不出 small-support distribution 和真实分布。Arora et al '17：神经网络 discriminator 有 $\leq m$ 参数 $\to$ 能被 support size $\approx m$ 的 generator 骗过。
+  \end{itemize}
+\end{enumerate}
+
+\paragraph{Mode collapse 不是 memorization}
+
+\textbf{Memorization} 是 generator 偷懒，把训练集图片背下来吐出去——本质是过拟合。如果是 memorization，fix 很简单：加数据、加 regularization、限制 generator 容量。
+
+\textbf{Arora 说的 mode collapse 不是这个}。原话：discriminator $f$ 有 $m$ 个参数 $\to$ 存在一个 support size $\approx m$ 的 generator $P_g$，让所有这样的 discriminator 都\textbf{统计上分不出} $P_g$ 和 $P_{real}$。注意是\textbf{原理上} discriminator capacity 不够——不是训练数据不够。即使给 discriminator 看 10 亿张真图，$f$ 还是只有 $m$ 个参数，还是只能"看到" $m$ 维的统计量。Generator 只要在这 $m$ 维上 match 就够了，不需要覆盖所有 mode。
+
+\textbf{类比}：discriminator 是色盲，只能区分亮度。Generator 学到"只要让亮度直方图对就行"——它可以只生成 100 张图（小 support），每张精心调整亮度，在 discriminator 眼里就和真分布完全一样。这跟训练数据多少无关，跟 discriminator "看到的维度" 有关。
+
+\begin{center}
+\begin{tabular}{|l|l|l|}
+\hline
+ & \textbf{Memorization} & \textbf{Arora-style mode collapse} \\
+\hline
+本质 & Generator 过拟合 & Discriminator capacity 不够 \\
+Fix & 加数据、regularize & 用更强的 discriminator class $F$ \\
+训练数据加倍 & 有帮助 & \textbf{没用} \\
+Generator support & 等于训练集 & 可以远小于训练集 \\
+\hline
+\end{tabular}
+\end{center}
+
+\textbf{为啥重要}：这是 W-GAN 改用更大 $F$（1-Lipschitz functions）的理论动机——你不能光给 generator 加 capacity，得给 discriminator 也加。如果 metric 太弱（$F$ 太小），不管 generator 多强都没用。
+
+\subsection{怎么训练 GAN}
+
+\textbf{Best response dynamics}：固定 $g$，把 $f$ 训到最优；固定 $f$，把 $g$ 训到最优；交替。
+
+\textbf{实际更好}：每个 generator gradient step 之间做几个 discriminator gradient step。
+
+\paragraph{W-GAN: 为啥要 clip weights}
+
+W-GAN loss：
+\[
+W(P_r, P_g) = \sup_{f \in F} \mathbb{E}_{x \sim P_r}[f(x)] - \mathbb{E}_{x \sim P_g}[f(x)]
+\]
+其中 $F$ 是 1-Lipschitz functions 的集合。1-Lipschitz 意思是 $|f(x) - f(y)| \leq \|x - y\|$，人话：\textbf{函数不能变化太快}。
+
+\textbf{为啥必须 1-Lipschitz}：如果不限制 $f$，sup 是无穷大。Discriminator 会 trivially 学到"真图输出 $+\infty$，假图输出 $-\infty$"，距离没意义。1-Lipschitz 把 $f$ 的陡峭程度约束住，sup 才有限。
+
+\textbf{Kantorovich-Rubinstein duality}：Wasserstein-1 距离（earth mover's distance）的对偶形式恰好就是 sup over 1-Lipschitz functions。所以"1-Lipschitz"不是人为加的 trick，是 Wasserstein 距离定义的一部分。
+
+\textbf{Weight clipping 的具体操作}：每个 SGD step 之后，对 discriminator 的每个 weight $w$ 做
+\[
+w \leftarrow \text{clip}(w, -c, c) = \max(-c, \min(c, w))
+\]
+人话：太大就拉到 $+c$，太小就拉到 $-c$，正常范围内的不动（$c$ 取小常数，例如 $0.01$）。只 clip discriminator 的 weights，不动 generator。
+
+\textbf{为啥这能控制 Lipschitz}：神经网络 $f$ 的 Lipschitz constant 满足 $\text{Lip}(f) \leq \prod_i \|W_i\|_{\text{op}}$，weights 小 $\to$ operator norms 小 $\to$ 网络平缓 $\to$ Lipschitz constant 小。这是一个粗暴的 upper bound——真实 Lipschitz constant NP-hard 难算，所以用 weights bound 当 loose proxy。
+
+\textbf{副作用（也是优点）：fix 了 vanishing gradient}
+
+注意 vanishing gradient 不是因为 gradient "小"，而是 DC-GAN 里 optimal discriminator 退化成\textbf{阶梯函数}，gradient 在大部分区域\textbf{恰好是 0}。
+
+\textbf{DC-GAN 的退化}：当 $P_r$ 和 $P_g$ support 不重叠（早期训练常见），optimal $D^*$ 在 $P_r$ 上等于 1，在 $P_g$ 上等于 0，中间任意。这是个阶梯函数：两个 support 上是常数 $\to$ $\nabla_x D^* = 0$。Generator gradient $= \nabla_x D^*(g(z)) \cdot \nabla_\theta g(z) = 0$。
+
+\textbf{W-GAN 阻止这个退化}：1-Lipschitz 意味着 $f$ \textbf{不能突然跳}——从 $P_g$ 走到 $P_r$，$f$ 的值最多变化 $\|x_g - x_r\|$。所以 $f$ 必须平滑过渡，不能是阶梯函数。
+
+\textbf{更强：optimal $f^*$ 会用满 Lipschitz budget}。W-GAN 的 sup 是 over 1-Lipschitz functions 的 max，optimal $f^*$ 在 $P_g$ 和 $P_r$ 之间几乎是\textbf{斜率恰好为 1} 的线性函数（沿 $P_g \to P_r$ 方向）。所以：
+\[
+\|\nabla_x f^*(g(z))\| \approx 1 \quad (\text{不是"} \leq 1 \text{ 可能很小"，是 } \approx 1)
+\]
+
+\textbf{对比}：
+
+\begin{center}
+\begin{tabular}{|l|l|l|}
+\hline
+ & DC-GAN & W-GAN \\
+\hline
+Optimal $f^*$ 形状 & 阶梯函数 & 斜率 $\approx 1$ 的斜坡 \\
+$\nabla_x f^*$ 在 $g(z)$ 处 & $= 0$ & $\approx 1$ \\
+Generator gradient & $0$（vanishing） & non-trivial \\
+\hline
+\end{tabular}
+\end{center}
+
+所以 1-Lipschitz constraint 做的两件事：(1) 禁止 $f$ 退化成阶梯函数；(2) sup 优化把 $f^*$ 推到"用满 Lipschitz" 的极限。\textbf{不是 upper bound 保证 lower bound，而是 upper bound 阻止退化 + 优化把 $f^*$ 推到上界}。
+
+\textbf{Weight clipping 的问题}：
+\begin{itemize}[nosep]
+  \item Bound 太 loose：clip 给的 Lipschitz bound 比真实值大很多
+  \item Capacity 浪费：很多 weights 被 clip 到边界，等于扔掉表达力
+  \item $c$ 难调：太小 $\to$ vanishing gradients，太大 $\to$ Lipschitz constraint 没起作用
+  \item Pathology：weights 集中在 $\pm c$ 两端，weight distribution 退化
+\end{itemize}
+
+\textbf{后续改进}：
+\begin{itemize}[nosep]
+  \item \textbf{Gradient penalty (WGAN-GP)}：加 loss term $\lambda \mathbb{E}[(\|\nabla_x f(x)\| - 1)^2]$，软约束 gradient norm $\approx 1$
+  \item \textbf{Spectral normalization (SN-GAN)}：每层 weight matrix 除以它的 spectral norm
+\end{itemize}
+W-GAN 原论文为了简单用了 clipping，后续工作都换了更好的方法。
+
+\subsection{怎么评估 GAN}
+
+\textbf{核心问题}：因为没有 likelihood，没法直接 evaluate 数据的 log-likelihood under generator。视觉 inspection 看不出 memorization 或 mode collapse。
+
+\textbf{Birthday paradox test}（Arora ICLR'18）：如果 size $s$ 的样本中以 $> 1/2$ 概率出现 duplicates，那分布的 effective support size $\approx s^2$。用来 diagnose mode collapse / small support。例如 DC-GAN 在 CelebA 上 support size 约 250K。
+
+\textbf{Linear interpolation test}：
+
+先解释 \textbf{linear interpolation}：给两个点 $a, b$，沿连接它们的直线取中间点：
+\[
+z(t) = (1-t) \cdot a + t \cdot b, \quad t \in [0, 1]
+\]
+$t=0$ 是 $a$，$t=1$ 是 $b$，中间是线性组合。直观就是从 $a$ 走直线到 $b$ 沿途取点。
+
+\textbf{测试步骤}：
+\begin{enumerate}[nosep]
+  \item 采两个 noise vectors $z_1, z_2 \sim \mathcal{N}(0, I)$
+  \item 沿直线取若干个点 $z(t) = (1-t) z_1 + t z_2$
+  \item 对每个 $z(t)$ 计算 $g(z(t))$，得到一连串图像
+  \item 看这些图像是不是\textbf{平滑过渡}的
+\end{enumerate}
+
+\textbf{为啥能 diagnose memorization}：
+\begin{itemize}[nosep]
+  \item 健康 generator：学到 latent space 的 smooth structure，$z$ 平滑变化 $\to$ 图也平滑变化（戴眼镜的脸慢慢变成长头发的脸）
+  \item Memorizing generator：只会吐训练集图，$z$ 稍变 $\to$ 输出从一张训练图\textbf{跳}到另一张，sharp transitions = memorization 信号
+\end{itemize}
+
+类比：generator 是个"latent $\to$ image"的函数，interpolation test 就是问"这函数是连续的吗？"连续 = 健康，跳变 = lookup table。
+
+\textbf{Inception score}：
+
+先解释 \textbf{Inception classifier}：Google 2014 年提出的 CNN 图像分类网络（原名 GoogLeNet），在 ImageNet 上预训练好——输入一张图，输出 1000 维概率分布 $p(y|x)$，表示这张图属于 ImageNet 1000 类（柯基犬、信封、键盘…）中每一类的概率。已经会"看图识物"了，所以可以借用它来评估 generator 生成的图。
+
+\textbf{核心 idea}：借用一个\textbf{已经知道"什么图片是 sensible 的"}的分类器：
+\begin{itemize}[nosep]
+  \item 清晰的图 $\to$ Inception 应该 confident 地分类（$p(y|x)$ 是 spike，entropy 低）
+  \item 模糊垃圾 $\to$ Inception 搞不清楚，$p(y|x)$ 接近 uniform（entropy 高）
+  \item 多样的图 $\to$ marginal $p(y) = \mathbb{E}_x[p(y|x)]$ 覆盖很多类别（entropy 高）
+  \item Mode collapse（只生成柯基）$\to$ $p(y)$ 集中在一类（entropy 低）
+\end{itemize}
+
+希望：
+\begin{itemize}[nosep]
+  \item $H(p(y|x))$ \textbf{low}（生成的图片很 ``sure'' 属于哪一类）
+  \item $H(p(y))$ \textbf{high}（生成的类别多样）
+\end{itemize}
+\[
+  \text{Inception score} = \exp\!\big(\mathbb{E}_{x \sim P_g} \mathrm{KL}(p(y|x) \| p(y))\big)
+\]
+KL 大 = 单图很 confident（low entropy）但整体类别分散（high entropy）= 又清晰又多样。
+
+\textbf{Caveats}：
+\begin{itemize}[nosep]
+  \item 只对 ImageNet-like 图有意义。MNIST、人脸 GAN 用 inception score 没意义（Inception 会瞎分类）
+  \item Inception 会被 adversarial samples 骗——high inception score 不代表人眼看着好
+\end{itemize}
+
+\textbf{FID (Fréchet Inception Distance)}：用 Inception 的中间层 feature（不是分类输出）提取 features，把真实和生成的 feature distribution 各 fit 一个 Gaussian，算两个 Gaussian 之间的 Wasserstein-2 distance。比 inception score 更鲁棒，是现在的标准评估指标。
+
+L18 是 GAN 的各种应用和变体（Conditional GAN、AC-GAN 等），不展开。
 
 % ============================================================
 \section{Score Matching}
 % Lecture 19
 % ============================================================
 
+\subsection{大局：整个 lecture 的脉络}
+
+\begin{verbatim}
+MLE 训 EBM 需要 ∇log Z（贵，要 MCMC）
+   ↓
+Score matching: 换个 loss，∇_x log Z = 0，绕开 Z
+   ↓
+但 ∇_x log p_data 也不知道
+   ↓
+Integration by parts: 把 ∇_x log p_data 从公式里消掉
+   ↓
+Final loss: ||s_θ||^2 + 2 tr(∇s_θ)
+   ↓
+trace 太贵 (O(d) backprops)
+   ↓
+Sliced score matching: 随机投影 → 1D 问题
+   ↓
+但 low-mass region 估计不准 + Langevin mixing 慢
+   ↓
+Denoising score matching: annealing + 加噪
+   ↓
+loss simpler (Gaussian 有 explicit score)
+   ↓
+[L21 把 σ 推到连续 → SDE → diffusion model]
+\end{verbatim}
+
+每一步都是为了解决上一步的问题。把这条链记住，整章就 unify 了。
+
 \subsection{动机：MLE for EBM 需要 $\nabla_\theta \log Z$}
 
-对 energy-based model $p_\theta(x) \propto \exp(-E_\theta(x))$，MLE 的 gradient 是：
+对 energy-based model $p_\theta(x) = \frac{1}{Z_\theta} \exp(-E_\theta(x))$，MLE 的 gradient 是：
 \[
   \nabla_\theta \log p_\theta(x) = -\nabla_\theta E_\theta(x) - \nabla_\theta \log Z_\theta
 \]
-第一项好算，第二项 $\nabla_\theta \log Z_\theta = \mathbb{E}_{p_\theta}[-\nabla_\theta E_\theta(x)]$ 需要从 $p_\theta$ 采样（MCMC）--- 每一步 gradient descent 都要跑一次 MCMC，太贵。
+第一项好算，第二项展开：
+\[
+  \nabla_\theta \log Z_\theta = \frac{1}{Z_\theta} \nabla_\theta Z_\theta = \frac{1}{Z_\theta} \int \exp(-E_\theta(x)) \nabla_\theta(-E_\theta(x)) \, dx = \mathbb{E}_{p_\theta}[-\nabla_\theta E_\theta(x)]
+\]
+\textbf{这是个 expectation under $p_\theta$}——必须从 $p_\theta$ 采样（MCMC）才能估。每一步 gradient descent 都要跑一次 MCMC，太贵。
 
 \subsection{Score Function 和为什么 $Z$ 消失}
 
@@ -1260,59 +1564,221 @@ L18 是 GAN 的各种应用和变体（Conditional GAN、AC-GAN 等）。
 \[
   s(x) = \nabla_x \log p(x) \quad (\mathbb{R}^d \to \mathbb{R}^d)
 \]
-注意是对 $x$ 求导，不是对 $\theta$。在每个点 $x$ 给出一个向量，指向分布密度增大最快的方向。
+注意是\textbf{对 $x$} 求导，不是对 $\theta$。在每个点 $x$ 给出一个向量，指向分布密度增大最快的方向。可视化是个 vector field：箭头都指向 high density 区域。
 \end{definition}
 
-为什么 $Z$ 消失：$\nabla_x \log p_\theta(x) = \nabla_x(-E_\theta(x) - \log Z_\theta) = -\nabla_x E_\theta(x)$。因为 $Z_\theta$ 不依赖 $x$，对 $x$ 求导时是常数，导数为零。
+\textbf{为什么 $Z$ 消失}：
+\[
+  \nabla_x \log p_\theta(x) = \nabla_x[-E_\theta(x) - \log Z_\theta] = -\nabla_x E_\theta(x)
+\]
+因为 $Z_\theta$ 是个数（不依赖 $x$），对 $x$ 求导时是常数，导数为零。\textbf{$Z$ 在 score 里彻底不见了}。
 
 \subsection{Score Matching Objective}
 
-不匹配分布本身，匹配 score function：
+\textbf{Idea}：不匹配分布本身，匹配 score function。
 \[
   \min_\theta \;\mathbb{E}_{p_{data}}\!\big[\|\nabla_x \log p_\theta(x) - \nabla_x \log p_{data}(x)\|^2\big]
 \]
+这就是 \textbf{Fisher divergence}（两个分布 score 的 $L^2$ 距离）。如果 $p_\theta = p_{data}$ 则等于 $0$，是个合理的"距离"。
 
-问题：我们不知道 $\nabla_x \log p_{data}(x)$（我们只有数据样本，不知道 $p_{data}$ 的解析形式）。
+\textbf{新问题}：我们不知道 $\nabla_x \log p_{data}(x)$。$p_{data}$ 是真实分布，我们只有 samples，没有解析形式。
 
 \subsection{Integration by Parts Trick}
 
-展开平方 $\|a - b\|^2 = \|a\|^2 + \|b\|^2 - 2\langle a, b\rangle$，第二项不依赖 $\theta$（扔掉），第一项好算。关键是第三项 $\mathbb{E}_{p_{data}}\langle \nabla_x \log p_\theta, \nabla_x \log p_{data}\rangle$ 包含未知的 $\nabla_x \log p_{data}$。
-
-用 integration by parts（向量版）消掉它：
+展开平方 $\|a - b\|^2 = \|a\|^2 + \|b\|^2 - 2\langle a, b \rangle$：
 \[
-  \mathbb{E}_p\!\big[\langle f(x), \nabla_x \log p(x)\rangle\big] = -\mathbb{E}_p\!\big[\mathrm{div}\, f(x)\big], \quad \mathrm{div}\, f(x) = \sum_i \frac{\partial f_i}{\partial x_i}
+\mathbb{E}_{p_{data}} \|s_\theta - \nabla_x \log p_{data}\|^2 = \underbrace{\mathbb{E}_{p_{data}} \|s_\theta\|^2}_{\text{第一项}} + \underbrace{\mathbb{E}_{p_{data}} \|\nabla_x \log p_{data}\|^2}_{\text{第二项}} - 2\underbrace{\mathbb{E}_{p_{data}}\langle s_\theta, \nabla_x \log p_{data}\rangle}_{\text{第三项}}
 \]
+\begin{itemize}[nosep]
+  \item \textbf{第一项}：只含 $s_\theta$，可以直接算（用 sample average）
+  \item \textbf{第二项}：不含 $\theta$，对优化没影响，扔掉
+  \item \textbf{第三项}：含未知的 $\nabla_x \log p_{data}$，是 problem
+\end{itemize}
 
-最终 loss（不含 $p_{data}$ 的 score）：
+\textbf{Main trick：integration by parts (vector version)}：
 \[
-  \boxed{\frac{1}{N}\sum_i \|s_\theta(x_i)\|^2 + 2\,\mathrm{Tr}\!\big(Ds_\theta(x_i)\big)}
+\mathbb{E}_p\big[\langle f(x), \nabla_x \log p(x) \rangle\big] = -\mathbb{E}_p[\text{div}\, f(x)]
 \]
-其中 $s_\theta(x) = \nabla_x \log p_\theta(x)$（用 neural net 参数化），$Ds_\theta$ 是 $s_\theta$ 的 Jacobian。
+其中 $\text{div}\, f(x) = \sum_i \frac{\partial f_i}{\partial x_i}$（divergence，散度）。
 
-\subsection{什么时候 break}
+\textbf{证明}（一行版本）：
+\begin{align*}
+\int p(x) \langle \nabla_x \log p(x), f(x) \rangle dx &= \int \langle \nabla_x p(x), f(x) \rangle dx \quad (\nabla \log p = \nabla p / p) \\
+&= \sum_i \int \frac{\partial p}{\partial x_i} f_i(x) \, dx \\
+&= -\sum_i \int p(x) \frac{\partial f_i}{\partial x_i} dx \quad (\text{integration by parts}) \\
+&= -\mathbb{E}_p[\text{div}\, f(x)]
+\end{align*}
+（假设 $p(x) f(x) \to 0$ as $\|x\| \to \infty$，对 reasonable distributions 都满足。）
 
-\begin{enumerate}
-  \item \textbf{Jacobian 太贵}：$\mathrm{Tr}(Ds_\theta)$ 需要算 $d$ 个对角元素，每个要一次 backprop $\to$ $O(d)$ 倍开销。Sliced score matching 通过随机投影 $v$ 降到 $O(1)$。
-  \item \textbf{Low-density regions 的 score 不准}：loss 是 $\mathbb{E}_{p_{data}}[\cdot]$，在 $p_{data}$ 密度低的地方没有数据，所以 $s_\theta$ 在那里可以是任意的 --- 但 Langevin sampling 可能会经过那些区域。
-  \item \textbf{Langevin sampling 慢}：训练完后要采样需要跑 Langevin dynamics $x_{t+1} = x_t - \eta\, s_\theta(x) + \sqrt{2\eta}\,\xi$。多峰分布时 mode 之间有 energy barrier，mixing time 可能指数级。
+应用到第三项 $f = s_\theta = \nabla_x \log p_\theta$：
+\[
+-2 \mathbb{E}_{p_{data}}\langle s_\theta, \nabla_x \log p_{data}\rangle = 2 \mathbb{E}_{p_{data}}[\text{div}\, s_\theta] = 2 \mathbb{E}_{p_{data}}[\text{Tr}(\nabla_x s_\theta)]
+\]
+注意 $\text{div}\, s_\theta = \text{Tr}(\nabla_x s_\theta) = \text{Tr}(\nabla_x^2 \log p_\theta)$（Hessian 的 trace = Laplacian）。
+
+\textbf{最终 loss}（Hyvärinen 2005）：
+\[
+  \boxed{\mathcal{L}(\theta) = \mathbb{E}_{p_{data}} \left[\|s_\theta(x)\|^2 + 2\,\text{Tr}(\nabla_x s_\theta(x))\right]}
+\]
+\textbf{Sample 版本}：
+\[
+  \frac{1}{N}\sum_i \|s_\theta(x_i)\|^2 + 2\,\text{Tr}(D s_\theta(x_i))
+\]
+\textbf{两件事都不需要}：
+\begin{itemize}[nosep]
+  \item 不需要 $Z$（score $s_\theta$ 直接 parametrize 为神经网络 $\mathbb{R}^d \to \mathbb{R}^d$）
+  \item 不需要 $\nabla_x \log p_{data}$（被 integration by parts 消掉了）
+\end{itemize}
+只需要 $s_\theta$ 和它的 Jacobian。
+
+\subsection{什么时候 break：实际问题 1 --- Trace 太贵}
+
+$\text{Tr}(D s_\theta(x))$ 需要算 Jacobian 的 $d$ 个对角元素 $\frac{\partial s_{\theta,i}}{\partial x_i}$，每个要一次 backprop $\to$ $O(d)$ 倍开销。图像 $d \approx 10^6$，根本跑不动。
+
+\subsection{Sliced Score Matching}
+
+\textbf{Trick}：用随机投影 + Monte Carlo 估期望。
+
+\textbf{关键 lemma}：如果 $\mathbb{E}_{v \sim p_v}[v v^T] = I_d$（"isotropic distribution"，比如均匀分布在球面上），那对任何 $a \in \mathbb{R}^d$：
+\[
+\mathbb{E}_{v \sim p_v}[(v^T a)^2] = \|a\|_2^2
+\]
+\textbf{证明}：$\mathbb{E}[(v^T a)^2] = \mathbb{E}[v^T a a^T v] = \mathbb{E}[\text{Tr}(v^T a a^T v)] = \mathbb{E}[\text{Tr}(a a^T v v^T)] = \text{Tr}(a a^T \mathbb{E}[v v^T]) = \text{Tr}(a a^T) = \|a\|^2$。（用了 trace 的 cyclic property。）
+
+\textbf{应用到 score matching loss}：
+\[
+\mathbb{E}_{p_{data}} \|s_\theta - \nabla_x \log p_{data}\|^2 = \mathbb{E}_{p_{data}} \mathbb{E}_{v \sim p_v} (v^T s_\theta - v^T \nabla_x \log p_{data})^2
+\]
+现在 inner expression 是\textbf{标量}！再用 integration by parts 处理 $v^T \nabla_x \log p_{data}$：
+\[
+\mathcal{L}_{\text{sliced}}(\theta) = \mathbb{E}_{p_{data}} \mathbb{E}_{v \sim p_v} \left[(v^T s_\theta(x))^2 + 2 v^T (\nabla_x s_\theta(x)) v\right]
+\]
+\textbf{Trace 项变成 $v^T J v$}（$J = \nabla_x s_\theta$）。这只需要算\textbf{一次} Jacobian-vector product，等价于一次 backprop。$O(d)$ 降到 $O(1)$。
+
+实际操作：每个 sample $x_i$ 配一个随机 $v_i$，loss 用 $(x_i, v_i)$ 估。
+
+\subsection{什么时候 break：实际问题 2 --- Low-mass region + Langevin mixing}
+
+\textbf{Issue 1：Low-mass region 估计不准}
+
+Loss 是 $\mathbb{E}_{p_{data}}[\cdot]$ —— \textbf{在 $p_{data}$ 密度低的地方，没有数据 sample，loss 几乎不惩罚 $s_\theta$ 在那里的错误}。所以 $s_\theta$ 在 low-mass region 可以瞎指。
+
+\textbf{为啥重要}：Langevin sampling 是个迭代过程，从一个初始点出发，沿着 score 走。如果起始点（或路径上的点）在 low-mass region，那 score 错得离谱，sampler 被带偏。多 modal 分布尤其常见——mode 之间是 low-mass region。
+
+\textbf{Issue 2：Langevin mixing 慢（多峰分布）}
+
+回忆 L9：Langevin dynamics
+\[
+x_{t+1} = x_t - \eta \nabla_x E(x) + \sqrt{2\eta} \xi_k
+\]
+是 gradient descent + Gaussian noise 在 energy landscape 上跑。如果 energy landscape 有两个深 valley（两个 mode），中间隔个 hill，sampler 大部分时间被困在一个 valley 里，跨过 hill 到另一个 valley 需要等一个罕见的 noise spike 把它推过去。
+
+\textbf{Bovier '02, '04}：在 metastable system 里，从 mode A 跨到 mode B 的期望时间 $\sim \exp(\Delta E / T)$，\textbf{barrier 高度的指数}。深 modes $\to$ exponential mixing time。
+
+\subsection{Denoising Score Matching: Annealing 救场}
+
+\textbf{Song-Ermon '20 的 fix}：把数据加噪到不同 noise level，分别学 score。
+
+\textbf{Smoothed distribution}：
+\[
+p_{\sigma, \text{data}}(x) = p_{\text{data}}(x) * \mathcal{N}(0, \sigma^2 I) = \int p_{\text{data}}(x - \delta) \mathcal{N}(\delta; 0, \sigma^2 I) d\delta
+\]
+对几个温度 $\sigma_1 > \sigma_2 > \cdots > \sigma_L$ 各学一个 score $s_\theta(x, i)$。
+
+\textbf{为啥 fix 了上面两个问题}：
+\begin{itemize}[nosep]
+  \item \textbf{Low-mass region 消失}：smoothed distribution 比原分布"摊得更开"，原本 low-mass region 现在有 mass 了，score 好估计
+  \item \textbf{Mixing 变快}：smoothed distribution 的 modes 之间 barrier 更低，Langevin 跨越更容易
+\end{itemize}
+
+\textbf{为啥用加噪而不是 temperature annealing}（$p^{1/T}$）？
+
+回忆 L11：temperature annealing 用 $p_T(x) \propto p(x)^{1/T}$。但这需要 \textbf{unnormalized $p(x)$ 的解析形式}。而 score matching 场景下我们\textbf{只有 samples}，不知道 $p_{\text{data}}$ 的 functional form——没法做 temperature annealing。但加噪可以 directly from samples：$\tilde{x} = x + z$，$z \sim \mathcal{N}(0, \sigma^2 I)$，立刻得到 smoothed 分布的 sample。
+
+\textbf{New loss}：
+\[
+\arg\min_\theta \sum_i \lambda(\sigma_i) \mathbb{E}_{x \sim p_{\sigma_i, \text{data}}} \|s_\theta(x, i) - \nabla_x \log p_{\sigma_i, \text{data}}(x)\|^2
+\]
+$\lambda(\sigma_i)$ 是不同 noise level 的 weighting。
+
+\subsection{DSM Loss 的 simpler form}
+
+DSM 的关键 trick：可以\textbf{完全避开 Jacobian / trace}。
+
+\textbf{Claim}：
+\[
+\arg\min_\theta \mathbb{E}_{x \sim p_{\sigma, \text{data}}} \|s_\theta(x) - \nabla_x \log p_{\sigma, \text{data}}(x)\|^2 = \arg\min_\theta \mathbb{E}_{\tilde{x} \sim p_{\text{data}}} \mathbb{E}_{x \sim q_\sigma(\cdot|\tilde{x})} \|s_\theta(x) - \nabla_x \log q_\sigma(x|\tilde{x})\|^2
+\]
+其中 $q_\sigma(x|\tilde{x}) = \mathcal{N}(x; \tilde{x}, \sigma^2 I)$ 是从 clean $\tilde{x}$ 到 noisy $x$ 的 perturbation kernel。
+
+\textbf{证明 sketch}：把 $p_{\sigma, \text{data}}(x) = \int p_{\text{data}}(\tilde{x}) q_\sigma(x | \tilde{x}) d\tilde{x}$ 代入 cross term，交换积分顺序，把 $\nabla_x \log p_{\sigma, \text{data}}$ 替换成 $\nabla_x \log q_\sigma(x | \tilde{x})$（用 $\nabla \log p = \nabla p / p$）。完成 square 后 RHS 出现。
+
+\textbf{为啥 RHS 比 LHS 好用}：$q_\sigma(x | \tilde{x})$ 是 Gaussian，\textbf{有 explicit score}：
+\[
+\log q_\sigma(x | \tilde{x}) = -\frac{1}{2\sigma^2}\|x - \tilde{x}\|^2 + \text{const}
+\quad\Rightarrow\quad
+\nabla_x \log q_\sigma(x | \tilde{x}) = \frac{\tilde{x} - x}{\sigma^2}
+\]
+\textbf{Final DSM loss}：
+\[
+\boxed{\mathcal{L}_{\text{DSM}}(\theta) = \sum_i \lambda(\sigma_i) \mathbb{E}_{\tilde{x} \sim p_{\text{data}}} \mathbb{E}_{x \sim \mathcal{N}(\tilde{x}, \sigma_i^2 I)} \left\|s_\theta(x, i) - \frac{\tilde{x} - x}{\sigma_i^2}\right\|^2}
+\]
+\textbf{两件事都好}：
+\begin{itemize}[nosep]
+  \item 没有 trace / Jacobian（只有 $\|s_\theta - \text{target}\|^2$，纯 regression）
+  \item Target $\frac{\tilde{x} - x}{\sigma^2}$ 完全 explicit
+\end{itemize}
+
+\textbf{直觉}：$\frac{\tilde{x} - x}{\sigma^2}$ 是从 noisy $x$ 指向 clean $\tilde{x}$ 的方向。$s_\theta$ 在学 \textbf{denoising direction}——给一张加噪图，预测"应该往哪边走才能 denoise"。
+
+\subsection{DSM 采样：Annealed Langevin Dynamics}
+
+训练完后采样：
+
+\begin{verbatim}
+Algorithm: Annealed Langevin Dynamics
+Require: noise levels {σ_1, ..., σ_L}, base step size ε, T steps per level
+1: Initialize x̃_0 (e.g., uniform noise)
+2: for i = 1 to L:
+3:   α_i ← ε * σ_i² / σ_L²       (step size scales with noise level)
+4:   for t = 1 to T:
+5:     z_t ~ N(0, I)
+6:     x̃_t ← x̃_{t-1} + (α_i/2) s_θ(x̃_{t-1}, σ_i) + √α_i * z_t
+7:   x̃_0 ← x̃_T   (warm start for next level)
+8: return x̃_T
+\end{verbatim}
+
+\textbf{关键}：从高 noise level 开始（容易 mix），逐步降到低 noise level。每一级用上一级的终点做 warm start。这就是\textbf{annealing}——温度从高到低。
+
+\subsection{什么时候 break / 重点回顾}
+
+\textbf{Score function definition}：$s(x) = \nabla_x \log p(x)$，$\mathbb{R}^d \to \mathbb{R}^d$。\textbf{对 $x$ 求导}。
+
+\textbf{为啥用 score matching 而不是 MLE}：
+\begin{itemize}[nosep]
+  \item MLE 需要 $\nabla_\theta \log Z = \mathbb{E}_{p_\theta}[\cdot]$，每步要 MCMC
+  \item Score matching 用 $\nabla_x \log p$，$\nabla_x \log Z = 0$，绕开 $Z$
+\end{itemize}
+
+\textbf{必背 loss}：
+\begin{itemize}[nosep]
+  \item Hyvärinen: $\mathbb{E}[\|s_\theta\|^2 + 2 \text{Tr}(\nabla_x s_\theta)]$
+  \item Sliced: $\mathbb{E}_{x, v}[(v^T s_\theta)^2 + 2 v^T (\nabla_x s_\theta) v]$
+  \item DSM: $\mathbb{E}[\|s_\theta(x, \sigma) - (\tilde{x} - x)/\sigma^2\|^2]$
+\end{itemize}
+
+\textbf{Integration by parts trick}：$\mathbb{E}_p[\langle f, \nabla \log p \rangle] = -\mathbb{E}_p[\text{div}\, f]$。这是把 $\nabla \log p_{\text{data}}$ 从 loss 里消掉的关键。
+
+\textbf{什么时候 break}：
+\begin{enumerate}[nosep]
+  \item Trace 太贵 ($O(d)$ backprops) $\to$ sliced score matching
+  \item Low-mass region $\to$ score 不准 $\to$ Langevin 被带偏
+  \item Multimodal 分布 $\to$ Langevin mixing 指数慢
+  \item 上面三个都被 DSM (annealing) fix
+  \item DSM 需要选 noise schedule $\{\sigma_i\}$，选不好效果差
 \end{enumerate}
 
-\subsection{Denoising Score Matching (DSM)}
-
-解决 low-density 和 slow mixing 的方法：\textbf{在多个 noise level 上做 score matching}（annealing）。
-
-对 $p_{data}$ 加不同程度的 Gaussian noise：$p_{\sigma_i, data}(x) = p_{data} * \mathcal{N}(0, \sigma_i I)$。
-
-$\sigma_1 > \sigma_2 > \cdots > \sigma_L$：噪声从大到小。大噪声 $\to$ 分布被"抹平"，low-density region 消失，score 好估计；小噪声 $\to$ 接近真实分布。
-
-DSM 的 loss 简化为（不需要 Jacobian）：
-\[
-  \boxed{\sum_i \lambda(\sigma_i)\, \mathbb{E}_{\tilde{x} \sim p_{data}} \mathbb{E}_{x \sim \mathcal{N}(\tilde{x}, \sigma_i^2 I)} \left\|s_\theta(x, i) - \frac{\tilde{x} - x}{\sigma_i^2}\right\|^2}
-\]
-
-直觉：$s_\theta$ 在学"从 noisy $x$ 指向 clean $\tilde{x}$ 的方向" --- 就是 denoising。
-
-采样：Annealed Langevin dynamics --- 从高 noise level 开始跑 Langevin，逐步降低到低 noise level。每一级用上一级的终点做 warm start。
+\textbf{Score matching vs MLE 的精度}：当 modes 之间 separation 很大时，score matching 估的 mode 高度可能跟真值差很远（因为 score 在 mode 之间几乎为 0，没区分度）。MLE 不会有这问题。这是 score matching 的固有 weakness。
 
 % ============================================================
 \section{Noise Contrastive Estimation (NCE)}
@@ -1322,6 +1788,228 @@ DSM 的 loss 简化为（不需要 Jacobian）：
 \subsection{概念概览}
 
 跟 score matching 平行的另一种绕开 $Z$ 的方法。把"学分布"变成"分辨真数据 vs 噪声"的 \textbf{binary classification}。分类器不需要知道 $Z$ 就能判断真假。
+
+% ============================================================
+\section{Diffusion Models}
+% Lecture 21
+% ============================================================
+
+\subsection{核心 idea}
+
+\textbf{把 L19 denoising score matching 的离散温度序列推到连续极限}：
+\begin{itemize}[nosep]
+  \item L19 用了几个离散温度 $\sigma_1 > \sigma_2 > \cdots > \sigma_L$
+  \item Diffusion 把 $L \to \infty$、温度间隔 $\to 0$
+  \item 结果：一个 \textbf{stochastic differential equation (SDE)}，描述"数据被噪声慢慢腐蚀"的过程
+  \item 训练：学 score function；采样：解\textbf{反向 SDE}
+\end{itemize}
+
+\subsection{SDE 背景：Itô diffusion}
+
+\textbf{Stochastic differential equation (SDE)}：带随机性的 ODE。Itô diffusion 长这样：
+\[
+d\mathbf{x} = \mathbf{f}(\mathbf{x}, t) \, dt + g(t) \, d\mathbf{w}
+\]
+\begin{itemize}[nosep]
+  \item $\mathbf{f}(\mathbf{x}, t)$ = \textbf{drift}（确定性"指导方向"）
+  \item $g(t)$ = noise scale
+  \item $d\mathbf{w}$ = \textbf{Brownian motion} / Wiener process（连续时间随机游走）
+\end{itemize}
+
+\textbf{Brownian motion 的定义性质}：increments are past-independent 且 $w(t+u) - w(t) \sim \mathcal{N}(0, u)$（增量是 Gaussian，方差等于时间间隔）。
+
+\textbf{离散版本}（数值模拟用）：
+\[
+\mathbf{x}_{t+\Delta t} = \mathbf{x}_t + \mathbf{f}(\mathbf{x}_t, t) \Delta t + g(t) \sqrt{\Delta t} \, \xi, \quad \xi \sim \mathcal{N}(0, I)
+\]
+注意 noise 的 scale 是 $\sqrt{\Delta t}$ 不是 $\Delta t$——这是 Brownian motion 的特性。
+
+\subsection{Langevin = SDE}
+
+回忆 L19 的 Langevin dynamics（离散）：
+\[
+x_{t+1} = x_t - \eta \nabla f(x_t) + \sqrt{2\eta} \, \xi_k
+\]
+连续极限就是一个 SDE：
+\[
+dx_t = -\nabla f(x_t) \, dt + \sqrt{2} \, dW_t
+\]
+即 drift = $-\nabla f$（gradient flow），noise scale = $\sqrt{2}$。
+
+\subsection{从 DSM 到 SDE}
+
+L19 denoising score matching 用了几个离散 noise level：
+\begin{align*}
+x_0 &\sim p_{\text{data}} \\
+x_1 &= x_0 + \sigma_1 z_1, \quad z_1 \sim \mathcal{N}(0, I) \\
+x_2 &= x_1 + \sqrt{\sigma_2^2 - \sigma_1^2} \, z_2 \\
+&\vdots
+\end{align*}
+推到连续极限（$L \to \infty$）：
+\[
+\mathbf{x}(t + \Delta t) = \mathbf{x}(t) + \sqrt{\sigma^2(t + \Delta t) - \sigma^2(t)} \, \mathbf{z}(t) \approx \mathbf{x}(t) + \sqrt{\frac{d[\sigma^2(t)]}{dt} \Delta t} \, \mathbf{z}(t)
+\]
+对应 SDE：
+\[
+d\mathbf{x} = \sqrt{\frac{d[\sigma^2(t)]}{dt}} \, d\mathbf{w}
+\]
+\textbf{这是一个 forward SDE}：drift $= 0$，只有噪声项，把数据慢慢扩散成 pure noise。
+
+\textbf{更一般}：可以选任何 forward SDE $d\mathbf{x} = \mathbf{f}(\mathbf{x}, t) dt + g(t) d\mathbf{w}$，把数据 $p_{\text{data}}$ 慢慢"扩散"成 simple distribution（比如 Gaussian）。
+
+\subsection{Reversing the SDE: Anderson '82} （重点）
+
+\textbf{核心问题}：怎么找一个反向 SDE 从噪声回到数据？
+
+\textbf{Anderson 1982} 给了一个非常漂亮的结果。给定 forward SDE
+\[
+d\mathbf{x} = \mathbf{f}(\mathbf{x}, t) \, dt + g(t) \, d\mathbf{w}
+\]
+对应的\textbf{反向 SDE} 是：
+\[
+\boxed{d\mathbf{x} = [\mathbf{f}(\mathbf{x}, t) - g^2(t) \nabla_x \log p_t(\mathbf{x})] \, dt + g(t) \, d\mathbf{w}}
+\]
+其中 $p_t(\mathbf{x})$ 是 forward 过程在时刻 $t$ 的边缘分布。
+
+\textbf{关键观察}：反向 SDE 里出现了 \textbf{score function} $\nabla_x \log p_t(\mathbf{x})$！这就是为啥 score matching + diffusion 是天然搭配。
+
+\textbf{策略}：
+\begin{enumerate}[nosep]
+  \item 选一个 fixed forward SDE（比如 variance-exploding 或 variance-preserving）
+  \item 用 score matching 学 $s_\theta(\mathbf{x}, t) \approx \nabla_x \log p_t(\mathbf{x})$
+  \item 数值解反向 SDE 来生成 samples
+\end{enumerate}
+
+\subsection{Stochastic calculus（怎么证 Anderson）}
+
+不用记证明，知道 logic 即可。
+
+\textbf{Itô's Lemma}：SDE 的 chain rule。给 $dx_t = f \, dt + g \, dw_t$ 和 test function $h$：
+\[
+dh(x_t, t) = \left(\partial_t h + \partial_x h \cdot f + \tfrac{1}{2} \partial_x^2 h \cdot g^2\right) dt + \partial_x h \cdot g \, dw_t
+\]
+\textbf{重点}：比普通 chain rule 多了 $\frac{1}{2} \partial_x^2 h \cdot g^2$ 这一项。直觉是 $dw^2 = dt$（Brownian motion 的 quadratic variation 不是 $0$），所以 Taylor 展开里 $dx^2$ 项不能丢。
+
+\textbf{Fokker-Planck equation}：描述 SDE 的 marginal distribution $p_t(x)$ 如何随时间演化：
+\[
+\partial_t p_t(x) = -\partial_x(p_t(x) f(x, t)) + \tfrac{1}{2} g^2(t) \partial_x^2 p_t(x)
+\]
+直觉：第一项是 drift 把概率"推"动，第二项是 diffusion 把概率"摊"开。
+
+\textbf{Anderson 的推导}：写下 forward SDE 的 Fokker-Planck，然后反向时间，找一个新 SDE 让它的 Fokker-Planck 匹配。算出来的 drift 就是 $f - g^2 \nabla_x \log p_t$。
+
+\subsection{怎么训练：score matching loss}
+
+跟 L19 一样：
+\[
+\mathbb{E}_{t \sim \mathcal{U}(0, T)} \mathbb{E}_{p_t(\mathbf{x})} \left[ \lambda(t) \| \nabla_x \log p_t(\mathbf{x}) - s_\theta(\mathbf{x}, t) \|_2^2 \right]
+\]
+连续版本而已。$\lambda(t)$ 是不同时间的 weighting。用 denoising score matching trick 可以避开直接算 $\nabla_x \log p_t$。
+
+\textbf{比离散温度版的好处}：不用手动调温度 schedule，连续 $t$ 自动覆盖。
+
+\subsection{怎么采样：解反向 SDE}
+
+学好 score function 之后，需要数值解反向 SDE。
+
+\textbf{方法 1：Euler-Maruyama}（最简单）：
+\[
+\Delta \mathbf{x} \leftarrow [\mathbf{f}(\mathbf{x}, t) - g^2(t) s_\theta(\mathbf{x}, t)] \Delta t + g(t) \sqrt{|\Delta t|} \mathbf{z}
+\]
+注意 $\Delta t$ 是负数（反向时间）。这就是 SDE 版的 gradient descent + 噪声。跟 L19 的 annealed Langevin 几乎一样，区别是这里 $t$ 也在每步更新。
+
+\textbf{方法 2：Predictor-Corrector}（Song et al 2021）：每步分两步
+\begin{enumerate}[nosep]
+  \item \textbf{Predictor}：Euler-Maruyama 走一步反向 SDE
+  \item \textbf{Corrector}：在当前 noise level 跑几步 Langevin "纠正" 误差
+\end{enumerate}
+
+\subsection{Probability Flow ODE: derandomizing} （重点）
+
+\textbf{神奇结果}：反向 SDE 可以等价地用一个\textbf{确定性} ODE 来 simulate：
+\[
+d\mathbf{x} = \left[\mathbf{f}(\mathbf{x}, t) - \tfrac{1}{2} g^2(t) \nabla_x \log p_t(\mathbf{x})\right] dt
+\]
+注意：drift 系数是 $\tfrac{1}{2}$ 不是 $1$，且\textbf{没有 $d\mathbf{w}$ 项}（无随机性）。
+
+\textbf{Claim}：从同一个 $\mathbf{x}_0 \sim p_0$ 出发，跑这个 ODE 和跑反向 SDE 得到的 $\mathbf{x}_T$ 有\textbf{同样的 marginal distribution}。
+
+\textbf{为啥重要}：
+\begin{itemize}[nosep]
+  \item ODE 比 SDE 解起来快（可以用大 step size、高阶 solver）
+  \item ODE 是 deterministic invertible map $\to$ 可以用 \textbf{change of variables} 算 likelihood：
+    \[
+    \log p_0(\mathbf{x}(0)) = \log p_T(\mathbf{x}(T)) + \int_0^T \nabla \cdot \mathbf{f}_\theta(\mathbf{x}(t), t) \, dt
+    \]
+    Diffusion 模型也能 evaluate likelihood！（GAN 不行，VAE 只有 ELBO）
+  \item 用 Hutchinson trace estimator 在高维 efficient
+\end{itemize}
+
+\textbf{Tradeoff}：ODE 采样更快但 sample 质量比 SDE 差一点。
+
+\subsection{VAE view: DDPM} （重点）
+
+\textbf{Ho et al '20 (DDPM)} 把 diffusion 写成离散链 + VAE 视角：
+\begin{center}
+$\mathbf{x}_T \to \cdots \to \mathbf{x}_t \to \mathbf{x}_{t-1} \to \cdots \to \mathbf{x}_0$
+\end{center}
+\textbf{Forward (fixed)}：
+\[
+q(\mathbf{x}_t | \mathbf{x}_{t-1}) := \mathcal{N}(\mathbf{x}_t; \sqrt{1 - \beta_t} \mathbf{x}_{t-1}, \beta_t I)
+\]
+$\beta_t$ 是预设的 noise schedule。这就是 \textbf{fixed encoder}（不学）。
+
+\textbf{Backward (学的)}：
+\[
+p_\theta(\mathbf{x}_{t-1} | \mathbf{x}_t) := \mathcal{N}(\mathbf{x}_{t-1}; \boldsymbol{\mu}_\theta(\mathbf{x}_t, t), \boldsymbol{\Sigma}_\theta(\mathbf{x}_t, t))
+\]
+
+\textbf{这是 infinite-step VAE with fixed encoder}。普通 VAE：encoder $q_\phi$ 和 decoder $p_\theta$ 都学。Diffusion VAE：encoder 是固定的加噪过程，只学 decoder。
+
+\textbf{ELBO}（variational approx of likelihood）：
+\[
+\mathbb{E}_q \left[ \underbrace{D_{\text{KL}}(q(\mathbf{x}_T | \mathbf{x}_0) \| p(\mathbf{x}_T))}_{L_T} + \sum_{t > 1} \underbrace{D_{\text{KL}}(q(\mathbf{x}_{t-1} | \mathbf{x}_t, \mathbf{x}_0) \| p_\theta(\mathbf{x}_{t-1} | \mathbf{x}_t))}_{L_{t-1}} - \underbrace{\log p_\theta(\mathbf{x}_0 | \mathbf{x}_1)}_{L_0} \right]
+\]
+\textbf{比普通 VAE 的好处}：每个 KL term 都有 \textbf{closed form}（因为 $q$ 是 Gaussian），不需要 reparam trick + Monte Carlo。
+
+\textbf{$\epsilon$-prediction loss}（painful 推导后）：
+\[
+L_{\text{simple}} = \mathbb{E}_{\mathbf{x}_0, \boldsymbol{\epsilon}} \left[ \| \boldsymbol{\epsilon} - \boldsymbol{\epsilon}_\theta(\sqrt{\bar{\alpha}_t} \mathbf{x}_0 + \sqrt{1 - \bar{\alpha}_t} \boldsymbol{\epsilon}, t) \|^2 \right]
+\]
+\textbf{直觉}：模型 $\boldsymbol{\epsilon}_\theta$ 学的是"给一张加噪图，预测加进去的噪声"。这就是 denoising！
+
+\textbf{关键等价}：DDPM 的 ELBO loss \textbf{等价于} score matching loss（推导稍微痛苦但结论简洁）。所以 DDPM 和 Score-SDE 是同一个东西的两种 view：
+\begin{itemize}[nosep]
+  \item \textbf{Score view}：学 $\nabla_x \log p_t(\mathbf{x})$，连续 SDE framework
+  \item \textbf{VAE view}：学 reverse Markov chain，离散 ELBO framework
+\end{itemize}
+
+\subsection{什么时候 break / 重点回顾}
+
+\textbf{记住的公式}：
+\begin{itemize}[nosep]
+  \item Forward SDE: $d\mathbf{x} = \mathbf{f}(\mathbf{x}, t) dt + g(t) d\mathbf{w}$
+  \item Anderson 反向 SDE: $d\mathbf{x} = [\mathbf{f} - g^2 \nabla_x \log p_t] dt + g(t) d\mathbf{w}$
+  \item Probability Flow ODE: $d\mathbf{x} = [\mathbf{f} - \tfrac{1}{2} g^2 \nabla_x \log p_t] dt$（系数 $\tfrac{1}{2}$，无噪声）
+  \item DDPM forward: $q(\mathbf{x}_t | \mathbf{x}_{t-1}) = \mathcal{N}(\sqrt{1 - \beta_t} \mathbf{x}_{t-1}, \beta_t I)$
+\end{itemize}
+
+\textbf{概念}：
+\begin{itemize}[nosep]
+  \item Score function = 反向 SDE 的 drift 修正项
+  \item DDPM = infinite-depth VAE with fixed encoder
+  \item DDPM ELBO 损失 $\equiv$ score matching 损失
+  \item ODE 比 SDE 快但质量差
+  \item Diffusion 唯一能 evaluate likelihood 的非-likelihood-based 生成模型（通过 ODE + change of variables）
+\end{itemize}
+
+\textbf{什么时候 break}：
+\begin{itemize}[nosep]
+  \item Forward SDE 选错（noise schedule 不合理）$\to$ 学不到好 score
+  \item Score matching 在低密度区域不准 $\to$ 反向 SDE 在那些区域错得离谱
+  \item Step size 太大 $\to$ 数值积分不稳定（需要小 step / predictor-corrector）
+  \item ODE 采样太快 $\to$ 离散化误差大，sample quality 下降
+\end{itemize}
 
 % ============================================================
 \section*{后半学期一句话总结}
@@ -1335,6 +2023,7 @@ DSM 的 loss 简化为（不需要 Jacobian）：
   \textbf{L17--18 GAN} & 扔掉 likelihood，对抗训练 \\
   \textbf{L19 Score Match} & 扔掉 $Z$，匹配梯度 \\
   \textbf{L20 NCE} & 扔掉 $Z$，用分类 \\
+  \textbf{L21 Diffusion} & Score matching + annealing 推到连续极限 (SDE) \\
 \end{tabular}
 \end{center}
 
