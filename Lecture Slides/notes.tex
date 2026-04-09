@@ -352,6 +352,29 @@ With the $Z$ problem in mind, the course offers two categories of solutions:
 
 \textbf{MCMC 的 trick}：构造一条 \textbf{Markov chain} $x_0 \to x_1 \to x_2 \to \cdots$，使得它的 \textbf{stationary distribution} 等于 $p$。跑足够久，链上的状态就近似从 $p$ 采的。
 
+\subsection{MCMC vs 其他 Monte Carlo 方法}
+
+为啥不用更简单的方法？MCMC 在高维下基本是\textbf{唯一可行的通用 sampler}。对比其他方法：
+
+\begin{center}
+\begin{tabular}{|l|l|l|l|}
+\hline
+方法 & 核心 idea & 优势 & 劣势 \\
+\hline
+Inverse CDF & $u \sim U(0,1)$, $x = F^{-1}(u)$ & 1D 极快、exact & 需要 $F^{-1}$，多维不行 \\
+Rejection sampling & propose $x \sim q$, accept with prob $\frac{p(x)}{Mq(x)}$ & exact 无 bias & 高维 acceptance rate $\to 0$ \\
+Importance sampling & weight $w_i = p(x_i)/q(x_i)$ & 不需 sampler，just $q$ & proposal 选不好 variance 爆炸 \\
+\textbf{MCMC} & 构造 chain，stationary $= p$ & 高维 work，只需 $\tilde p$ & 慢、有 bias、难 diagnose \\
+\hline
+\end{tabular}
+\end{center}
+
+\textbf{Rejection sampling 高维死法}：要找 envelope $M q(x) \geq p(x)$ for all $x$。在 $d$ 维下，$M$ 通常 $\sim \exp(d)$（curse of dimensionality），acceptance rate $1/M \to 0$ 指数小。
+
+\textbf{Importance sampling 高维死法}：weight variance $\text{Var}_q[p/q]$ 在 $d$ 维下也指数爆炸，除非 $q \approx p$（鸡生蛋）。
+
+\textbf{MCMC 为啥能 escape}：不要求 $q$ 接近 $p$；通过\textbf{累积修正}（链跑久了自然收敛），不需要 envelope。代价是 sample 之间 \textbf{correlated}（不 i.i.d.），有 transient bias，convergence 难判断。
+
 \subsection{核心定义}
 
 \begin{definition}[Markov chain]
@@ -406,7 +429,29 @@ Detailed balance $\Rightarrow$ stationarity。即如果 $\pi$ 满足 detailed ba
   \item 以概率 $\alpha$ 接受 $x'$；否则留在 $x$
 \end{enumerate}
 
-\textbf{为啥这样设计}：可以验证这个 transition 满足 detailed balance for $\pi$（由 $\alpha$ 的形式直接保证）。
+\textbf{为啥这样设计}：$\alpha$ 的公式是被\textbf{逆向工程}出来强行让 transition 满足 detailed balance for $\pi$ 的。
+
+\textbf{显式 detailed balance 证明（考点）}：
+
+设 $T(x \to x') = q(x' | x) \alpha(x \to x')$ 是 effective transition kernel（先 propose 再 accept）。需要证 $\pi(x) T(x \to x') = \pi(x') T(x' \to x)$。
+
+WLOG 假设 $\pi(x') q(x | x') \leq \pi(x) q(x' | x)$（不失一般性，否则交换 $x, x'$ role）。这时
+\[
+\alpha(x \to x') = \frac{\pi(x') q(x | x')}{\pi(x) q(x' | x)}, \qquad \alpha(x' \to x) = \min\!\left(1, \frac{\pi(x) q(x' | x)}{\pi(x') q(x | x')}\right) = 1
+\]
+（注意 $\alpha(x' \to x) = 1$ 因为 ratio 翻过来 $\geq 1$，被 $\min$ clip 到 1。）
+
+LHS:
+\[
+\pi(x) T(x \to x') = \pi(x) q(x' | x) \cdot \frac{\pi(x') q(x | x')}{\pi(x) q(x' | x)} = \pi(x') q(x | x')
+\]
+
+RHS:
+\[
+\pi(x') T(x' \to x) = \pi(x') q(x | x') \cdot 1 = \pi(x') q(x | x')
+\]
+
+LHS $=$ RHS $\checkmark$。Detailed balance 成立 $\Rightarrow$ $\pi$ 是 stationary $\Rightarrow$ MH 是 valid sampler for $\pi$。
 
 \textbf{$Z$ 自动消}：注意 acceptance ratio 是 $\pi(x') / \pi(x) = \exp(E(x) - E(x'))$，$Z$ 在分子分母 cancel。\textbf{所以 MH 不需要 $Z$ 也能采样}。这是 MCMC 的核心卖点。
 
@@ -437,6 +482,32 @@ Detailed balance $\Rightarrow$ stationarity。即如果 $\pi$ 满足 detailed ba
 \textbf{Gibbs 是 MH 的特例}：Gibbs 等价于 MH with proposal $q(x'|x) = p(x'_i | x_{-i})$，acceptance ratio = 1（永远接受）。
 
 \textbf{Stationarity}：每个 conditional update 都 preserves $p$（因为 $p(x_i | x_{-i})$ 是从正确分布采）。Cycle 一遍所有 coordinate 之后还是 $p$。
+
+\paragraph{具体例子：Ising model 的 Gibbs sampling}
+
+Ising model：spin $\sigma_i \in \{+1, -1\}$ on a lattice，能量
+\[
+E(\sigma) = -\sum_{(i,j) \in \text{edges}} \sigma_i \sigma_j - h \sum_i \sigma_i
+\]
+$p(\sigma) \propto e^{-\beta E(\sigma)}$。直接采 joint 不可能（state space 是 $2^N$），但 conditional 极简单：
+\[
+p(\sigma_i = +1 \mid \sigma_{-i}) = \frac{e^{\beta(\sum_{j \sim i} \sigma_j + h)}}{e^{\beta(\sum_{j \sim i} \sigma_j + h)} + e^{-\beta(\sum_{j \sim i} \sigma_j + h)}} = \sigma\!\left(2\beta\Big(\sum_{j \sim i} \sigma_j + h\Big)\right)
+\]
+（$\sigma$ 是 sigmoid，$j \sim i$ 是邻居。）
+
+\textbf{算法}：每次随机/顺序选一个 site $i$，按上面的 sigmoid 概率 flip 成 $+1$ 或 $-1$。每一步只算 $i$ 的几个邻居，超快。$N = 10^6$ spins 也跑得动。
+
+\textbf{相变和 mixing time}：在临界温度 $\beta_c$ 附近，correlation length 发散，Gibbs sampling 的 mixing time 也发散（critical slowing down）。这是经典 Monte Carlo 慢的例子，催生了 Wolff/Swendsen-Wang 等 cluster algorithm。
+
+\paragraph{Block Gibbs / Metropolis-within-Gibbs}
+
+\textbf{Block Gibbs}：把 coordinates 分组 $x = (B_1, B_2, \ldots, B_K)$，一次更新一个 block：$B_k^{\text{new}} \sim p(B_k \mid B_{-k})$。
+
+\textbf{为啥要分 block}：单 site Gibbs 在 \textbf{strong correlations} 下慢爬（因为单坐标 conditional 是 narrow distribution）。把高度相关的变量打包成 block 一起更新，每次能跨 correlation 走得远。
+
+例：Gaussian Markov random field，Block Gibbs 一次更新一组相关 variables，效率比 single-site Gibbs 高几个数量级。
+
+\textbf{Metropolis-within-Gibbs}：当某个 conditional $p(x_i \mid x_{-i})$ 没有 closed form 没法直接 sample 时，用一个 MH step \textbf{替代}那个 conditional sample。每个 site 是个 mini MH，整体还是循环 cycle。这是\textbf{实践中最常用的混合策略}（很多 conditional 没 closed form，但有 unnormalized form）。
 
 \subsection{Langevin Dynamics（连续空间）}
 
@@ -516,6 +587,62 @@ x_{t+1} = x_t + \eta \, s_\theta(x_t) + \sqrt{2\eta} \, \xi_t
   \item \textbf{Initialization sensitivity}：起始点离 typical set 远，需要长 burn-in
 \end{enumerate}
 
+\subsection{实操：burn-in, autocorrelation, ESS, convergence diagnostics}
+
+理论保证 chain 收敛到 $\pi$，实操要回答的问题更具体：\textbf{我跑了 $N$ 步，这些 sample 有多 ``effective''？}
+
+\paragraph{Burn-in}
+
+链的初始分布跟 stationary 差远了，前 $B$ 步的 sample 反映 transient state，不是真正的 $\pi$。\textbf{Burn-in} = 扔掉前 $B$ 步。
+
+\textbf{怎么选 $B$}：没有 universal rule，常见做法：
+\begin{itemize}[nosep]
+  \item 看 trace plot（$f(x_t)$ 对 $t$ 画图），等它"看起来 stationary"
+  \item 跑多条链 from different initialization，看什么时候它们 mix 到一起
+  \item Conservative：扔掉一半 sample
+\end{itemize}
+Burn-in 的本质问题是\textbf{你不知道 chain 是不是真的 mix 了}（特别是 multimodal 时，可能整段都困在一个 mode 里）。
+
+\paragraph{Autocorrelation}
+
+MCMC 的 sample 不是 i.i.d.，相邻 sample 高度相关。Lag-$k$ autocorrelation:
+\[
+\rho_k = \frac{\text{Cov}(f(x_t), f(x_{t+k}))}{\text{Var}(f(x_t))}
+\]
+$\rho_0 = 1$，$\rho_k$ 一般随 $k$ 衰减。衰减得越快 → sample 越 independent → 越好。
+
+\paragraph{Effective Sample Size (ESS)}
+
+\textbf{核心问题}：$N$ 个 correlated samples 相当于多少 independent samples？
+
+\textbf{答案}：
+\[
+\boxed{N_{\text{eff}} = \frac{N}{1 + 2 \sum_{k=1}^{\infty} \rho_k}}
+\]
+直觉：分母是 ``integrated autocorrelation time'' $\tau = 1 + 2\sum_k \rho_k$。$\tau$ 大 = 高 autocorrelation = $N_{\text{eff}}$ 小。
+
+\textbf{为啥重要}：MC error 是 $\text{Var}(\hat f) = \text{Var}(f) / N_{\text{eff}}$，\textbf{用 $N_{\text{eff}}$ 而不是 $N$}。一条 chain 跑 100k 步但 $N_{\text{eff}} = 50$ 是常见的 disaster，意味着估计极其不准。
+
+\textbf{实操工具}：Stan, PyMC 等都自动报告 $N_{\text{eff}}$。$N_{\text{eff}} > 100$ 是 minimum 可信，$> 1000$ 比较安心。
+
+\paragraph{Gelman-Rubin $\hat R$ diagnostic}
+
+\textbf{思路}：跑\textbf{多条 chain}（比如 $M = 4$ 条）from different initial points。如果都 mix 到 stationary 了，所有 chain 应该 ``looks the same''（chain 之间方差 $=$ chain 内方差）。
+
+\textbf{$\hat R$ statistic}：
+\[
+\hat R = \sqrt{\frac{\hat V}{W}}
+\]
+其中 $W$ = within-chain variance，$\hat V$ = 估计的 marginal variance（综合 within + between）。
+\begin{itemize}[nosep]
+  \item Mix 好：$\hat R \to 1$
+  \item 没 mix：$\hat R > 1$（chain 之间还有差异）
+\end{itemize}
+
+\textbf{Rule of thumb}：$\hat R < 1.01$ 算 converged，$\hat R > 1.1$ 一定还没。
+
+\textbf{$\hat R$ 比 trace plot 强在哪}：单条 chain 的 trace plot 可能 ``看起来 stationary'' 但其实困在某个 mode 里。多条 chain 从不同地方启动，如果都困在不同 mode 里 $\hat R$ 会大，能 catch 这种 multimodal failure。
+
 \subsection{Mixing time}
 
 \textbf{Mixing time}：链从初始分布收敛到 stationary distribution 所需的步数（更精确：达到给定 TV distance 的步数）。
@@ -577,6 +704,25 @@ L9 给了 vanilla MCMC：MH, Gibbs, Langevin。这些算法在简单分布上 wo
 \alpha = \min\!\left(1, \frac{\pi_i(x_{i+1}) \pi_{i+1}(x_i)}{\pi_i(x_i) \pi_{i+1}(x_{i+1})}\right) = \min\!\left(1, \exp\!\big[(1/T_i - 1/T_{i+1})(E(x_i) - E(x_{i+1}))\big]\right)
 \]
 
+\textbf{Swap formula 推导（考点）}：
+
+Joint state space 是 $(x_1, \ldots, x_K)$ 跨所有温度链。Joint stationary distribution:
+\[
+\Pi(x_1, \ldots, x_K) = \prod_{i=1}^K \pi_i(x_i) \propto \exp\!\Big(-\sum_i E(x_i)/T_i\Big)
+\]
+Swap operation 是 deterministic involution：proposal $(x_i, x_{i+1}) \to (x_{i+1}, x_i)$，对称，所以 MH ratio 只看 $\Pi$ 的 ratio：
+\[
+\frac{\Pi(\ldots, x_{i+1}, x_i, \ldots)}{\Pi(\ldots, x_i, x_{i+1}, \ldots)} = \frac{\pi_i(x_{i+1}) \pi_{i+1}(x_i)}{\pi_i(x_i) \pi_{i+1}(x_{i+1})}
+\]
+其他温度的 $\pi_j(x_j)$ 全部约掉（没动）。展开：
+\begin{align*}
+&= \exp\!\big[-E(x_{i+1})/T_i - E(x_i)/T_{i+1} + E(x_i)/T_i + E(x_{i+1})/T_{i+1}\big] \\
+&= \exp\!\big[(1/T_i - 1/T_{i+1})(E(x_i) - E(x_{i+1}))\big]
+\end{align*}
+$\checkmark$ 跟上面公式一致。
+
+\textbf{Sanity check}：因为 $T_i < T_{i+1}$，$1/T_i - 1/T_{i+1} > 0$。如果 $E(x_i) > E(x_{i+1})$（低温链 happens to 处于高能态），swap 提议有利（$\alpha > 1$），永远接受。直觉对：低温链得到一个低能态，高温链可以继续探索。
+
 \textbf{为啥能 fix multimodality}：高温链能跨越 barrier（$\exp(-\Delta E / T_K)$ 不再是天文数字）。当高温链发现一个新 mode，通过 swap 把这个状态"传"下来给低温链。低温链就 effective 地探索到了新 mode。
 
 \textbf{设计 tradeoff}：温度太密 $\to$ swap rate 高但需要很多链；温度太稀 $\to$ swap rate 低（相邻链 distribution 差太远）。
@@ -628,6 +774,20 @@ Joint $\pi(x, p) \propto \exp(-H(x, p))$。$p$-marginal 是 Gaussian，$x$-margi
 
 \textbf{HMC 是现代 Bayesian inference 的标配}（Stan, PyMC 都默认用 NUTS）。
 
+\paragraph{NUTS：怎么自适应避免 U-turn}
+
+\textbf{HMC 的痛点}：步数 $L$ 难调。$L$ 太小 → exploration 不够，跟 random walk 没差；$L$ 太大 → 球绕回起点（U-turn）→ 浪费 + 实际上没探索新区域。NUTS 自适应解决这个。
+
+\textbf{NUTS 核心 idea}（Hoffman \& Gelman 2014）：从初始点 $(x, p)$ 开始，往\textbf{两个时间方向}（前向和反向）同时跑 leapfrog，把 trajectory \textbf{double}：先 1 步，再 2 步，再 4 步，$\ldots$ —— 像 binary tree 长高。在每个 doubling 之后，检查 trajectory 的两端 $(x_{\text{left}}, x_{\text{right}})$ 是否开始 ``绕回''：
+\[
+(x_{\text{right}} - x_{\text{left}}) \cdot p_{\text{left}} < 0 \quad \text{or} \quad (x_{\text{right}} - x_{\text{left}}) \cdot p_{\text{right}} < 0
+\]
+两个端点的 momentum 跟 displacement 内积变负 = 球已经在往回滚 = U-turn。这时\textbf{停止 doubling}，从已 sample 的 trajectory 里选一个点作为 next state（按 transition probability sampling 来保 detailed balance）。
+
+\textbf{为啥这样保 detailed balance}：NUTS 的 trajectory selection 用的是\textbf{slice sampling} + careful balance 操作，证明比较 technical 但结论是 NUTS 仍然是 valid MCMC（stationary 是 target）。重点是 doubling + U-turn check 让 $L$ 自动适应当前点的 local geometry。
+
+\textbf{结果}：用户只需要 tune step size $\eta$（一个 scalar），$L$ 完全自动。Stan / PyMC / NumPyro 默认 sampler。
+
 \subsection{Fix 4: Spectral gap analysis}
 
 \textbf{Theory side}：怎么\textbf{量化} mixing time？
@@ -640,7 +800,33 @@ Markov chain 的 transition matrix $P$ 的 eigenvalues 满足 $1 = \lambda_1 > |
 
 \textbf{Multimodality 的 spectral 解释}：两个 mode 之间 barrier 高 $\to$ chain 在两个 mode 之间的 effective transition rate 极小 $\to$ $|\lambda_2|$ 接近 1 $\to$ gap 接近 0 $\to$ mixing 慢。
 
-这给了一个统一 framework 来理解为啥某些分布难采。L11 会讲一些 spectral gap 的具体 bounds（Cheeger inequality 等）。
+\paragraph{Cheeger inequality —— 把 gap 跟 geometry 联系起来}
+
+直接算 $|\lambda_2|$ 难。Cheeger inequality 给一个\textbf{几何 lower bound}，更直观。
+
+\textbf{Conductance / Cheeger constant}：对任意 subset $S \subset \mathcal{X}$ with $\pi(S) \leq 1/2$，定义
+\[
+\Phi(S) = \frac{\sum_{x \in S, y \notin S} \pi(x) P(x \to y)}{\pi(S)}
+\]
+分子 $=$ 从 $S$ 流出去的 probability mass（在 stationary 下），分母 $=$ $S$ 自己的 mass。$\Phi(S)$ 是 ``在 $S$ 里的点跳出 $S$ 的 average rate''。
+
+\textbf{Cheeger constant} $= \min_S \Phi(S)$，找\textbf{最瘦的 bottleneck}。
+
+\textbf{Cheeger inequality}：
+\[
+\boxed{\frac{\Phi^2}{2} \leq \text{gap} \leq 2 \Phi}
+\]
+\textbf{含义}：
+\begin{itemize}[nosep]
+  \item \textbf{Lower bound}（实用方向）：如果存在 small Cheeger constant 的 partition（即存在一个 deep barrier 把 state space 切成两半），spectral gap $\leq 2\Phi$ 也小，mixing 慢
+  \item \textbf{Upper bound}：相反方向，gap 大 $\Rightarrow$ 没有 narrow bottleneck
+\end{itemize}
+
+\textbf{为啥这是 multimodality 的精确刻画}：两个 mode 中间 barrier 高 $\Leftrightarrow$ 存在 partition $S$ = ``mode 1 周围'' 使得 $S$ 跟 $S^c$ 之间的 transition flux 极小 $\Leftrightarrow$ Cheeger constant 极小 $\Leftrightarrow$ spectral gap 极小 $\Leftrightarrow$ mixing time 极大。
+
+\textbf{物理类比}：water flow through a narrow channel。channel 越窄 (Cheeger constant 越小)，flow rate 越低 (gap 越小)，平衡时间越长 (mixing time 越长)。
+
+\textbf{对应的 ML 场景}：deep neural network 的 loss landscape 经常有 narrow valleys 和 deep modes，对应小 Cheeger constant，所以 vanilla MCMC 在这种 landscape 上 mix 极慢 —— 这解释了为啥 EBM training 难。
 
 \subsection{核心点回顾（L11 考点）}
 
@@ -665,7 +851,7 @@ Cheeger inequality & 把 gap 跟 geometry 联系起来 \\
   \item \textbf{Parallel tempering}：温度 schedule 选不好 swap rate 低
   \item \textbf{HMC}：step size / leapfrog 步数难调；超高维仍难
   \item \textbf{所有 MCMC}：bias-variance tradeoff，burn-in 难界定
-\end{enumerate>
+\end{enumerate}
 
 % ============================================================
 \section{Variational Inference}
