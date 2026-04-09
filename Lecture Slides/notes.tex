@@ -339,12 +339,333 @@ With the $Z$ problem in mind, the course offers two categories of solutions:
 % Lecture 9
 % ============================================================
 
+\subsection{背景：为啥需要 MCMC}
+
+\textbf{问题}：你有个分布 $p(x) \propto \exp(-E(x))$，知道 $E(x)$（unnormalized），但
+\begin{itemize}[nosep]
+  \item 不知道 $Z = \int \exp(-E(x)) dx$（高维 intractable）
+  \item 没法直接采样（不像 Gaussian 有 inverse CDF）
+  \item 想算 $\mathbb{E}_p[f(x)]$
+\end{itemize}
+
+\textbf{Monte Carlo}：用 sample average 近似 expectation $\mathbb{E}_p[f(x)] \approx \frac{1}{N} \sum_i f(x_i)$，$x_i \sim p$。但前提是你得能采样。
+
+\textbf{MCMC 的 trick}：构造一条 \textbf{Markov chain} $x_0 \to x_1 \to x_2 \to \cdots$，使得它的 \textbf{stationary distribution} 等于 $p$。跑足够久，链上的状态就近似从 $p$ 采的。
+
+\subsection{核心定义}
+
+\begin{definition}[Markov chain]
+$x_{t+1}$ 的分布只依赖于 $x_t$，不依赖更早的历史：
+\[
+P(x_{t+1} | x_t, x_{t-1}, \ldots) = P(x_{t+1} | x_t)
+\]
+Transition 完全由 $P(x \to x')$ 决定。
+\end{definition}
+
+\begin{definition}[Stationary distribution]
+分布 $\pi$ 是 Markov chain 的 stationary distribution 如果
+\[
+\pi(x') = \sum_x \pi(x) P(x \to x')
+\]
+意思是：如果当前状态分布是 $\pi$，下一步还是 $\pi$（不动点）。在合理条件下（irreducible + aperiodic），任何初始分布都会收敛到 $\pi$。
+\end{definition}
+
+\begin{definition}[Detailed balance]
+Markov chain 对分布 $\pi$ 满足 detailed balance 如果
+\[
+\pi(x) P(x \to x') = \pi(x') P(x' \to x) \quad \forall x, x'
+\]
+意思是 $x$ 和 $x'$ 之间双向"概率流"相等。
+\end{definition}
+
+\begin{lemma}
+Detailed balance $\Rightarrow$ stationarity。即如果 $\pi$ 满足 detailed balance，那 $\pi$ 是 stationary distribution。
+\end{lemma}
+
+\textbf{证明}（一行）：
+\[
+\sum_x \pi(x) P(x \to x') = \sum_x \pi(x') P(x' \to x) = \pi(x') \sum_x P(x' \to x) = \pi(x')
+\]
+（用 detailed balance 把 $\pi(x) P(x \to x')$ 换成 $\pi(x') P(x' \to x)$，然后 $\sum_x P(x' \to x) = 1$。）
+
+\textbf{反过来不成立}：stationary 不一定 detailed balance。Detailed balance 是更强的条件（implies time-reversibility）。但实际中设计 MCMC 算法时，一般通过 detailed balance 来\textbf{保证} stationarity——比验证一般 stationarity 容易。
+
+\subsection{Metropolis-Hastings (MH)}
+
+最 general 的 MCMC 算法。
+
+\textbf{Setup}：要采的目标分布 $\pi(x) \propto \exp(-E(x))$。选一个 proposal distribution $q(x' | x)$（通常是 symmetric，比如 $x' = x + $ Gaussian noise）。
+
+\textbf{算法}：
+\begin{enumerate}[nosep]
+  \item 当前状态 $x$，从 $q(x' | x)$ proposes 一个 $x'$
+  \item 计算 acceptance ratio
+  \[
+  \alpha(x \to x') = \min\!\left(1, \frac{\pi(x') q(x | x')}{\pi(x) q(x' | x)}\right)
+  \]
+  \item 以概率 $\alpha$ 接受 $x'$；否则留在 $x$
+\end{enumerate}
+
+\textbf{为啥这样设计}：可以验证这个 transition 满足 detailed balance for $\pi$（由 $\alpha$ 的形式直接保证）。
+
+\textbf{$Z$ 自动消}：注意 acceptance ratio 是 $\pi(x') / \pi(x) = \exp(E(x) - E(x'))$，$Z$ 在分子分母 cancel。\textbf{所以 MH 不需要 $Z$ 也能采样}。这是 MCMC 的核心卖点。
+
+\textbf{Symmetric proposal} ($q(x'|x) = q(x|x')$) 时，$\alpha = \min(1, \pi(x')/\pi(x))$ 简化为：
+\begin{itemize}[nosep]
+  \item $\pi(x') > \pi(x)$（"上坡"）：肯定接受
+  \item $\pi(x') < \pi(x)$（"下坡"）：以概率 $\pi(x')/\pi(x)$ 接受
+\end{itemize}
+直觉：链 prefers 高概率区域，但偶尔接受低概率提议（保证 detailed balance）。
+
+\subsection{Gibbs Sampling}
+
+\textbf{高维专用}。当 $x = (x_1, \ldots, x_d)$ 是高维向量时，从 joint $p(x)$ 提议很难，但从 conditional $p(x_i | x_{-i})$ 通常容易。
+
+\textbf{算法}（systematic scan）：
+\begin{enumerate}[nosep]
+  \item 当前 $x = (x_1, \ldots, x_d)$
+  \item 从 $p(x_1 | x_2, x_3, \ldots, x_d)$ 采新 $x_1$
+  \item 从 $p(x_2 | x_1^{\text{new}}, x_3, \ldots, x_d)$ 采新 $x_2$
+  \item $\ldots$
+  \item 从 $p(x_d | x_1^{\text{new}}, \ldots, x_{d-1}^{\text{new}})$ 采新 $x_d$
+  \item Repeat
+\end{enumerate}
+（也有 random scan 版本，每次随机选一个 coordinate 更新。）
+
+\textbf{为啥 conditional 容易}：在 PGM 里，$p(x_i | x_{-i}) = p(x_i | \text{Markov blanket of } x_i)$。Markov blanket 通常很小，conditional 是个低维分布。
+
+\textbf{Gibbs 是 MH 的特例}：Gibbs 等价于 MH with proposal $q(x'|x) = p(x'_i | x_{-i})$，acceptance ratio = 1（永远接受）。
+
+\textbf{Stationarity}：每个 conditional update 都 preserves $p$（因为 $p(x_i | x_{-i})$ 是从正确分布采）。Cycle 一遍所有 coordinate 之后还是 $p$。
+
+\subsection{Langevin Dynamics（连续空间）}
+
+\paragraph{物理出处}
+
+法国物理学家 Paul Langevin 1908 年研究 Brownian motion 时写的方程。原始 setup：\textbf{在 potential $E(x)$ 里运动的粒子，受到摩擦 + 随机热噪声}：
+\[
+\dot{x} = -\nabla E(x) + \text{thermal noise}
+\]
+平衡态下粒子的位置分布是 Boltzmann 分布 $\propto \exp(-E / k_B T)$。
+
+ML 把这个借过来：把 "平衡态分布" 当成你想采样的目标，\textbf{让粒子跑 Langevin dynamics，跑久了它的位置就近似从目标分布采的}。
+
+\paragraph{离散化的更新规则}
+
+\[
+\boxed{x_{t+1} = x_t - \eta \nabla_x E(x_t) + \sqrt{2 \eta} \, \xi_t, \quad \xi_t \sim \mathcal{N}(0, I)}
+\]
+两部分：
+\begin{itemize}[nosep]
+  \item $-\eta \nabla_x E(x_t)$: \textbf{gradient descent on energy}（往 $E$ 低的方向走 = 往 $p$ 高的方向走）
+  \item $\sqrt{2\eta}\, \xi_t$: \textbf{Gaussian noise}（每步加一点随机扰动）
+\end{itemize}
+
+连续 SDE 形式（$\eta \to 0$ 极限）：
+\[
+dx_t = -\nabla_x E(x_t) dt + \sqrt{2} \, dW_t
+\]
+
+\paragraph{直觉：exploit + explore}
+
+\begin{itemize}[nosep]
+  \item \textbf{没有 noise} $\to$ 纯 gradient descent $\to$ 收敛到一个 mode（local min of $E$），永远卡住。这是\textbf{优化}，不是采样
+  \item \textbf{没有 gradient} $\to$ 纯 random walk $\to$ 漫无目的，stationary 是 uniform，不是 $p$
+  \item \textbf{两个加起来} $\to$ 既被 gradient "拉" 向高密度区域，又有 noise 让它跳出 local mode 探索别处。\textbf{平衡分布恰好是 $p \propto \exp(-E)$}
+\end{itemize}
+
+\textbf{物理类比}：小球在能量景观 $E(x)$ 里运动。摩擦力让它往低处滚（gradient），热噪声让它偶尔跳起来（noise）。在合适温度下，长期分布是 Boltzmann。
+
+\paragraph{为啥噪声系数是 $\sqrt{2\eta}$ 不是 $\sqrt{\eta}$}
+
+这是让 stationary distribution 恰好是 $\exp(-E)$ 的 \textbf{magic number}。可以从 Fokker-Planck equation 验证：连续 SDE $dx = -\nabla E dt + \sqrt{2} dW$ 对应 FP equation
+\[
+\partial_t p_t = \nabla \cdot (p_t \nabla E) + \nabla^2 p_t
+\]
+代入 $p^* \propto \exp(-E)$ 验证 $\partial_t p^* = 0$：
+\[
+\nabla \cdot (e^{-E} \nabla E) + \nabla^2 e^{-E} = \nabla \cdot (e^{-E} \nabla E) + \nabla \cdot (-e^{-E} \nabla E) = 0 \checkmark
+\]
+\textbf{两项恰好抵消}。如果 noise 系数换成 $\sqrt{c}$，stationary 会变成 $\exp(-2E/c)$（temperature 改变）。$\sqrt{2}$ 让 temperature = 1。
+
+离散版 step size $\eta$，noise 系数变成 $\sqrt{2\eta}$ 是因为 $dW_t \approx \sqrt{\eta} \xi$（Brownian motion 的 quadratic variation）。
+
+\paragraph{离散化误差与 MALA}
+
+\textbf{严格地}，离散版 Langevin stationary distribution \textbf{不是}恰好 $\exp(-E)$，有 $O(\eta)$ bias。两个修正：
+\begin{itemize}[nosep]
+  \item $\eta \to 0$：bias 消失，但每步走得太小，需要更多 steps
+  \item \textbf{MALA (Metropolis-Adjusted Langevin Algorithm)}：每个 Langevin step 后加一个 MH accept/reject，严格保证 stationary 是 $\exp(-E)$
+\end{itemize}
+实际中如果 $\eta$ 不太大，unadjusted Langevin 也够用（特别是 score-based generative models）。
+
+\paragraph{在 score matching 里的用法}
+
+训练完 $s_\theta(x) \approx \nabla_x \log p_\theta(x) = -\nabla_x E_\theta(x)$ 之后，用 Langevin 采样：
+\[
+x_{t+1} = x_t + \eta \, s_\theta(x_t) + \sqrt{2\eta} \, \xi_t
+\]
+（符号变了：$s_\theta$ 已经是 $-\nabla E$，所以是 $+s_\theta$。）
+
+\paragraph{什么时候 break}
+
+\begin{enumerate}[nosep]
+  \item \textbf{Multimodal}：mode 之间 barrier 高，跨越时间 $\sim \exp(\Delta E)$（指数慢）
+  \item \textbf{High dim}：$\eta$ 难调，太小走得慢，太大 stationary 偏离目标
+  \item \textbf{离散化 bias}：$\eta$ 太大 $\to$ stationary 不是真的 $\exp(-E)$
+  \item \textbf{Initialization sensitivity}：起始点离 typical set 远，需要长 burn-in
+\end{enumerate}
+
+\subsection{Mixing time}
+
+\textbf{Mixing time}：链从初始分布收敛到 stationary distribution 所需的步数（更精确：达到给定 TV distance 的步数）。
+
+L11 会详细讨论 mixing 慢的各种 failure modes 和 fix。
+
+\subsection{核心点回顾（考点）}
+
+\begin{center}
+\begin{tabular}{|l|l|}
+\hline
+概念 & 一句话 \\
+\hline
+Markov chain & 下一步只依赖当前状态 \\
+Stationary distribution & 不动点分布 $\pi P = \pi$ \\
+Detailed balance & 双向概率流相等，$\Rightarrow$ stationary \\
+MH acceptance & $\min(1, \pi(x')/\pi(x))$，$Z$ 自动消 \\
+Gibbs & 一次更新一个变量，永远接受 \\
+Langevin & gradient descent + 噪声，连续空间 \\
+Mixing time & 收敛到 stationary 所需的步数 \\
+\hline
+\end{tabular}
+\end{center}
+
+\textbf{为啥 score matching 想绕开 MCMC}：训 EBM 需要 $\mathbb{E}_{p_\theta}[\nabla E]$，每个 SGD step 都得跑 MCMC。MCMC 慢、不稳、难调。Score matching 把 MCMC 从训练里彻底去掉（L19），只在采样时还需要。
 
 % ============================================================
 \section{Advanced MCMC}
 % Lecture 11
 % ============================================================
 
+\subsection{回忆 L9 + L11 的目标}
+
+L9 给了 vanilla MCMC：MH, Gibbs, Langevin。这些算法在简单分布上 work，但在\textbf{高维 + multimodal} 的真实场景下经常 mix 极慢。L11 讲怎么 fix。
+
+\subsection{什么时候 vanilla MCMC break}
+
+\begin{enumerate}
+  \item \textbf{Multimodality}：多个 mode 之间隔着 low-density barrier。Langevin / MH 大部分时间被困在一个 mode，跨越 barrier 需要一个罕见的 noise spike。Bovier '02, '04：跨越时间 $\sim \exp(\Delta E / T)$，\textbf{barrier 高度的指数}。这是实际中最常见的 failure mode。
+  \item \textbf{High dimensions}：高维下，random walk proposal 的 acceptance rate 可能极低（容易 propose 出 typical set）。需要小心 tune step size $\eta$。
+  \item \textbf{Strong correlations}：变量之间高度 correlated 时，axis-aligned moves（如 Gibbs）只能沿坐标轴慢慢爬，效率低。
+  \item \textbf{Rare events / heavy tails}：tail 区域很少被访问，但你可能 care about 那里的 probability mass。
+\end{enumerate}
+
+\subsection{Fix 1: Parallel Tempering (Replica Exchange)}
+
+\textbf{Idea}：同时跑\textbf{多条链}，每条对应不同 temperature $T_1 < T_2 < \cdots < T_K$：
+\[
+\pi_i(x) \propto \exp(-E(x) / T_i)
+\]
+\begin{itemize}[nosep]
+  \item $T_1 = 1$：原分布（你 care 的）
+  \item $T_K$ 大：高温下分布被"摊平"，barrier 变低，链容易 mix
+  \item 中间温度：插值
+\end{itemize}
+
+\textbf{Swap step}：每隔几步，相邻温度的两条链尝试 swap states $x_i \leftrightarrow x_{i+1}$，以 MH ratio 接受：
+\[
+\alpha = \min\!\left(1, \frac{\pi_i(x_{i+1}) \pi_{i+1}(x_i)}{\pi_i(x_i) \pi_{i+1}(x_{i+1})}\right) = \min\!\left(1, \exp\!\big[(1/T_i - 1/T_{i+1})(E(x_i) - E(x_{i+1}))\big]\right)
+\]
+
+\textbf{为啥能 fix multimodality}：高温链能跨越 barrier（$\exp(-\Delta E / T_K)$ 不再是天文数字）。当高温链发现一个新 mode，通过 swap 把这个状态"传"下来给低温链。低温链就 effective 地探索到了新 mode。
+
+\textbf{设计 tradeoff}：温度太密 $\to$ swap rate 高但需要很多链；温度太稀 $\to$ swap rate 低（相邻链 distribution 差太远）。
+
+\subsection{Fix 2: Simulated Tempering}
+
+\textbf{Idea}：单条链，把 temperature 也当成 state 的一部分。State 是 $(x, T_i)$，链同时在 $x$-空间和 $T$-空间游走。
+
+\textbf{Pros}：只需要一条链。
+
+\textbf{Cons}：需要预先估计每个温度的 normalization $Z(T_i)$（不然 $T$-marginal 不对）。这个 estimation 本身就难。
+
+实践中 parallel tempering 用得更多。
+
+\subsection{Fix 3: Hamiltonian Monte Carlo (HMC)}
+
+\textbf{Idea}：引入辅助 \textbf{momentum} 变量 $p$，把目标分布 $\pi(x)$ 嵌入到一个更大的 joint $\pi(x, p)$，然后用\textbf{Hamiltonian dynamics} 在这个扩展空间里跑。
+
+\textbf{Setup}：定义 Hamiltonian
+\[
+H(x, p) = E(x) + \tfrac{1}{2} p^T M^{-1} p
+\]
+\begin{itemize}[nosep]
+  \item $E(x)$ = potential energy（你的 target 的 $-\log$）
+  \item $\tfrac{1}{2} p^T M^{-1} p$ = kinetic energy（$M$ 是 mass matrix）
+\end{itemize}
+Joint $\pi(x, p) \propto \exp(-H(x, p))$。$p$-marginal 是 Gaussian，$x$-marginal 还是原 target。
+
+\textbf{算法}：
+\begin{enumerate}[nosep]
+  \item 采新 momentum $p \sim \mathcal{N}(0, M)$
+  \item 用 Hamilton's equations 跑 $L$ 步 leapfrog integration（保 energy）：
+    \[
+    \dot{x} = M^{-1} p, \quad \dot{p} = -\nabla_x E(x)
+    \]
+  \item 用 MH ratio 接受/拒绝（弥补离散化误差）
+\end{enumerate}
+
+\textbf{为啥比 random walk MH 好}：Hamiltonian dynamics 保 energy（在连续极限下），所以 leapfrog 的轨迹大致沿着 $E$ 的等高线走——\textbf{long-range coherent moves}，不会像 random walk 那样原地打转。在高维和强 correlation 下效率高很多。
+
+\textbf{物理直觉}：想象一个球在 $E(x)$ 形成的"势能景观"里以某速度 $p$ 运动，没有摩擦力。它能滚很远，跨过山谷，探索远处的 region。这比"每次只走一小步还可能被拒绝"高效得多。
+
+\textbf{什么时候 break}：
+\begin{itemize}[nosep]
+  \item $L$（leapfrog 步数）和 step size 都难调
+  \item U-turns：球绕回起点，浪费计算（NUTS = No-U-Turn Sampler 自适应 fix）
+  \item 超 high dimensions 下还是难（所有 sampler 都难）
+\end{itemize}
+
+\textbf{HMC 是现代 Bayesian inference 的标配}（Stan, PyMC 都默认用 NUTS）。
+
+\subsection{Fix 4: Spectral gap analysis}
+
+\textbf{Theory side}：怎么\textbf{量化} mixing time？
+
+Markov chain 的 transition matrix $P$ 的 eigenvalues 满足 $1 = \lambda_1 > |\lambda_2| \geq |\lambda_3| \geq \cdots$。
+
+\textbf{Spectral gap} = $1 - |\lambda_2|$。
+
+\textbf{Theorem}：mixing time 大致 $\sim \frac{1}{\text{gap}} \log(1/\epsilon)$。Gap 大 $\to$ 快 mix；gap 小 $\to$ 慢 mix。
+
+\textbf{Multimodality 的 spectral 解释}：两个 mode 之间 barrier 高 $\to$ chain 在两个 mode 之间的 effective transition rate 极小 $\to$ $|\lambda_2|$ 接近 1 $\to$ gap 接近 0 $\to$ mixing 慢。
+
+这给了一个统一 framework 来理解为啥某些分布难采。L11 会讲一些 spectral gap 的具体 bounds（Cheeger inequality 等）。
+
+\subsection{核心点回顾（L11 考点）}
+
+\begin{center}
+\begin{tabular}{|l|l|}
+\hline
+方法 & 解决什么问题 \\
+\hline
+Parallel tempering & Multimodality（高温帮低温跨 barrier） \\
+Simulated tempering & Multimodality（单链版本，需要 $Z(T)$） \\
+HMC & 高维 + strong correlation（long-range moves） \\
+NUTS & HMC 的自适应版本（避免 U-turn） \\
+Spectral gap & 量化 mixing time 的 framework \\
+Cheeger inequality & 把 gap 跟 geometry 联系起来 \\
+\hline
+\end{tabular}
+\end{center}
+
+\textbf{什么时候 break / 出题点}：
+\begin{enumerate}[nosep]
+  \item \textbf{Vanilla MCMC + multimodality}：mixing 时间 $\exp(\Delta E)$
+  \item \textbf{Parallel tempering}：温度 schedule 选不好 swap rate 低
+  \item \textbf{HMC}：step size / leapfrog 步数难调；超高维仍难
+  \item \textbf{所有 MCMC}：bias-variance tradeoff，burn-in 难界定
+\end{enumerate>
 
 % ============================================================
 \section{Variational Inference}
@@ -1556,7 +1877,35 @@ loss simpler (Gaussian 有 explicit score)
 \[
   \nabla_\theta \log Z_\theta = \frac{1}{Z_\theta} \nabla_\theta Z_\theta = \frac{1}{Z_\theta} \int \exp(-E_\theta(x)) \nabla_\theta(-E_\theta(x)) \, dx = \mathbb{E}_{p_\theta}[-\nabla_\theta E_\theta(x)]
 \]
-\textbf{这是个 expectation under $p_\theta$}——必须从 $p_\theta$ 采样（MCMC）才能估。每一步 gradient descent 都要跑一次 MCMC，太贵。
+\textbf{这是个 expectation under $p_\theta$}——必须从 $p_\theta$ 采样（MCMC）才能估。每一步 gradient descent 都要跑一次 MCMC。
+
+\paragraph{为啥 "跑 MCMC" 这么贵}
+
+不是单一原因，是几个因素叠在一起。关键观察：\textbf{MCMC 是 inner loop}。
+
+\begin{verbatim}
+for SGD step in 1..10^5:           # outer loop
+  for MCMC step in 1..K:           # inner loop
+    Langevin step (forward+backward 一次 E_θ)
+  grad ← average over inner samples
+  θ ← θ - η * grad
+\end{verbatim}
+
+总开销 = (outer steps) $\times$ (inner steps) $\times$ (per-step cost)。每一步都要重跑 inner loop。
+
+\textbf{各个具体的贵法}：
+
+\begin{enumerate}[nosep]
+  \item \textbf{Per-step cost 不便宜}：每步 Langevin 需要 $\nabla_x E_\theta(x)$，等于一次 forward + backward pass through 神经网络 $E_\theta$。跟一次 SGD step 量级相当。
+  \item \textbf{Burn-in}：链从初始状态到接近 stationary 需要很多步。前面的 samples 是 biased，得扔掉。
+  \item \textbf{Autocorrelation}：链上相邻 samples 高度 correlated。要 $N$ 个 effectively independent samples 需要 $\gg N$ 步。
+  \item \textbf{Multimodality $\to$ exponential mixing}：图像分布有无数 modes，跨越 barriers 的时间 $\sim \exp(\Delta E)$。Vanilla Langevin 几乎没法 mix。
+  \item \textbf{$\theta$ 在变}：Outer loop 每步 $\theta$ 变了，理论上要重新 burn-in。Persistent Contrastive Divergence (PCD) trick 用上次 inner loop 的终点热启动，但 chain 还是会 drift。Contrastive Divergence (CD-$k$) 干脆只跑 $k$ 步，highly biased 但便宜（Hinton 训 RBM 用的）。
+\end{enumerate}
+
+\textbf{粗略 cost 估算}：outer $10^5$ $\times$ inner $10^3$ = $10^8$ backward passes，比纯 SGD 多 $\sim 1000$ 倍。严格 multimodal mixing 需要 inner $10^5$，总开销 $10^{10}$ —— 不可行。
+
+\textbf{Score matching 为啥便宜}：loss 是 $\mathbb{E}_{p_{data}}[\cdot]$（你已经有 data samples），\textbf{不是 under $p_\theta$}。完全不需要 MCMC inner loop。每个 SGD step 跟标准 supervised learning 一样的 cost。MCMC 在 score matching 里只在采样时才需要（一次性，不在 training loop 里）。
 
 \subsection{Score Function 和为什么 $Z$ 消失}
 
@@ -1595,20 +1944,85 @@ loss simpler (Gaussian 有 explicit score)
   \item \textbf{第三项}：含未知的 $\nabla_x \log p_{data}$，是 problem
 \end{itemize}
 
-\textbf{Main trick：integration by parts (vector version)}：
+\paragraph{先回顾 divergence}
+
+\textbf{Divergence (散度)} 是个微积分操作。给一个 \textbf{vector field} $f: \mathbb{R}^d \to \mathbb{R}^d$（每个点 $x$ 对应一个向量 $f(x)$），返回一个 scalar：
+\[
+\text{div}\, f(x) = \nabla \cdot f(x) = \sum_{i=1}^d \frac{\partial f_i}{\partial x_i}
+\]
+注意每个分量 $f_i$ 只对\textbf{对应的} $x_i$ 求偏导，然后求和（不是对所有 $x_j$）。
+
+\textbf{物理直觉}：把 $f$ 想象成流体速度场。$\text{div}\, f > 0$ 这点是 source（水龙头），$< 0$ 是 sink（下水道），$= 0$ 是 incompressible。最熟悉例子：Maxwell 方程 $\nabla \cdot \vec{E} = \rho/\epsilon_0$，电荷是电场的源。
+
+\textbf{例子}（$d = 2$）：
+\begin{itemize}[nosep]
+  \item $f(x_1, x_2) = (x_1, x_2)$（径向向外）：$\text{div}\, f = 1 + 1 = 2$，处处发散
+  \item $f(x_1, x_2) = (-x_2, x_1)$（旋转）：$\text{div}\, f = 0 + 0 = 0$，旋转不发散
+\end{itemize}
+
+\paragraph{Main trick：integration by parts (vector version)}
 \[
 \mathbb{E}_p\big[\langle f(x), \nabla_x \log p(x) \rangle\big] = -\mathbb{E}_p[\text{div}\, f(x)]
 \]
-其中 $\text{div}\, f(x) = \sum_i \frac{\partial f_i}{\partial x_i}$（divergence，散度）。
+\textbf{为啥 IBP 引出 divergence}：高维 IBP 把 vector $f$ 上的"导数"挪到 scalar $p$ 上之后，自然产生了 $\sum_i \partial f_i / \partial x_i$ 的形式。这是 1D $\int u v' dx = -\int u' v dx$ 的高维 vector 推广。
 
-\textbf{证明}（一行版本）：
-\begin{align*}
-\int p(x) \langle \nabla_x \log p(x), f(x) \rangle dx &= \int \langle \nabla_x p(x), f(x) \rangle dx \quad (\nabla \log p = \nabla p / p) \\
-&= \sum_i \int \frac{\partial p}{\partial x_i} f_i(x) \, dx \\
-&= -\sum_i \int p(x) \frac{\partial f_i}{\partial x_i} dx \quad (\text{integration by parts}) \\
-&= -\mathbb{E}_p[\text{div}\, f(x)]
-\end{align*}
-（假设 $p(x) f(x) \to 0$ as $\|x\| \to \infty$，对 reasonable distributions 都满足。）
+\paragraph{详细证明（为啥 LHS = RHS）}
+
+需要两个 trick 拼起来：log 求导技巧 + 1D IBP 在每个坐标上各做一次。
+
+\textbf{先复习 1D IBP}：
+\[
+\int u(x) v'(x) dx = u v \Big|_{-\infty}^\infty - \int u'(x) v(x) dx
+\]
+如果 $uv \to 0$ at $|x| \to \infty$，boundary 项消失，剩下 $\int u v' dx = -\int u' v dx$。直觉：把求导从 $v$ 搬到 $u$，加个负号。
+
+\textbf{Step 1: 写开 LHS}
+\[
+\text{LHS} = \int p(x) \langle f(x), \nabla_x \log p(x) \rangle dx
+\]
+
+\textbf{Step 2: log 求导技巧}：用链式法则 $\nabla_x \log p = \frac{\nabla_x p}{p}$，代入：
+\[
+\text{LHS} = \int p(x) \left\langle f(x), \frac{\nabla_x p(x)}{p(x)} \right\rangle dx = \int \langle f(x), \nabla_x p(x) \rangle dx
+\]
+\textbf{$p(x)$ 和 $\frac{1}{p(x)}$ 抵消了}——这是 trick 的关键，让 $p$ 从 outer 因子里消失。
+
+\textbf{Step 3: 把 inner product 拆成求和}
+\[
+\langle f(x), \nabla_x p(x) \rangle = \sum_{i=1}^d f_i(x) \frac{\partial p}{\partial x_i}
+\]
+\[
+\text{LHS} = \sum_i \int f_i(x) \frac{\partial p}{\partial x_i} dx_1 \cdots dx_d
+\]
+
+\textbf{Step 4: 对每一项用 1D IBP}。把第 $i$ 项的多维积分换顺序，把 $x_i$ 放到最里面：
+\[
+\int f_i(x) \frac{\partial p}{\partial x_i} dx = \int dx_1 \cdots \widehat{dx_i} \cdots dx_d \underbrace{\int f_i(x) \frac{\partial p}{\partial x_i} dx_i}_{\text{1D 积分 in } x_i}
+\]
+内层是 1D 积分（其他坐标当常数）。设 $u = f_i$，$v' = \frac{\partial p}{\partial x_i}$，应用 1D IBP：
+\[
+\int f_i \frac{\partial p}{\partial x_i} dx_i = \underbrace{f_i \cdot p \Big|_{x_i = -\infty}^{\infty}}_{= 0 \text{ if } f_i p \to 0} - \int p \frac{\partial f_i}{\partial x_i} dx_i = -\int p \frac{\partial f_i}{\partial x_i} dx_i
+\]
+\textbf{关键变化}：导数从 $p$ 上挪到 $f_i$ 上了，加个负号。
+
+把外层加回来：
+\[
+\int f_i \frac{\partial p}{\partial x_i} dx_1 \cdots dx_d = -\int p \frac{\partial f_i}{\partial x_i} dx_1 \cdots dx_d
+\]
+
+\textbf{Step 5: 对所有 $i$ 求和}
+\[
+\text{LHS} = -\sum_i \int p \frac{\partial f_i}{\partial x_i} dx = -\int p \underbrace{\sum_i \frac{\partial f_i}{\partial x_i}}_{= \text{div}\, f} dx = -\mathbb{E}_p[\text{div}\, f] = \text{RHS} \quad \blacksquare
+\]
+
+\textbf{三个 trick 的角色}：
+\begin{enumerate}[nosep]
+  \item \textbf{Log 求导}：$\nabla \log p = \nabla p / p$，把 LHS 里的 $p$ 因子 cancel 掉
+  \item \textbf{多维 IBP = 每个坐标各做一次 1D IBP}：不是新东西，就是 1D IBP 重复 $d$ 次
+  \item \textbf{Divergence 自然出现}：每次 1D IBP 把 $\frac{\partial p}{\partial x_i}$ 换成 $\frac{\partial f_i}{\partial x_i}$，求和就是 $\text{div}\, f$
+\end{enumerate}
+
+\textbf{Boundary 条件}：假设 $p(x) f(x) \to 0$ as $\|x\| \to \infty$，对 reasonable distributions（Gaussian, image distributions 等）都满足。
 
 应用到第三项 $f = s_\theta = \nabla_x \log p_\theta$：
 \[
@@ -1620,10 +2034,11 @@ loss simpler (Gaussian 有 explicit score)
 \[
   \boxed{\mathcal{L}(\theta) = \mathbb{E}_{p_{data}} \left[\|s_\theta(x)\|^2 + 2\,\text{Tr}(\nabla_x s_\theta(x))\right]}
 \]
-\textbf{Sample 版本}：
+\textbf{Sample 版本}（用 $N$ 个 training samples 估 expectation）：
 \[
-  \frac{1}{N}\sum_i \|s_\theta(x_i)\|^2 + 2\,\text{Tr}(D s_\theta(x_i))
+  \frac{1}{N}\sum_{i=1}^N \left[\|s_\theta(x_i)\|^2 + 2\,\text{Tr}(D s_\theta(x_i))\right]
 \]
+$\frac{1}{N}$ 不是 IBP 引入的，是从 \textbf{population expectation $\to$ empirical sample average} 的标准 Monte Carlo：$\mathbb{E}_{p_{data}}[g(x)] \approx \frac{1}{N} \sum_i g(x_i)$。$x_i$ 是训练数据，$1/N$ 就是"取平均"的意思。这是 ML 里到处都有的对应（expected risk vs empirical risk）。
 \textbf{两件事都不需要}：
 \begin{itemize}[nosep]
   \item 不需要 $Z$（score $s_\theta$ 直接 parametrize 为神经网络 $\mathbb{R}^d \to \mathbb{R}^d$）
@@ -1649,11 +2064,43 @@ $\text{Tr}(D s_\theta(x))$ 需要算 Jacobian 的 $d$ 个对角元素 $\frac{\pa
 \[
 \mathbb{E}_{p_{data}} \|s_\theta - \nabla_x \log p_{data}\|^2 = \mathbb{E}_{p_{data}} \mathbb{E}_{v \sim p_v} (v^T s_\theta - v^T \nabla_x \log p_{data})^2
 \]
-现在 inner expression 是\textbf{标量}！再用 integration by parts 处理 $v^T \nabla_x \log p_{data}$：
+现在 inner expression 是\textbf{标量}（因为 inner product $v^T (\text{anything})$ 把 $d$-维向量塌成 1 个数）！再用 integration by parts 处理 $v^T \nabla_x \log p_{data}$：
 \[
 \mathcal{L}_{\text{sliced}}(\theta) = \mathbb{E}_{p_{data}} \mathbb{E}_{v \sim p_v} \left[(v^T s_\theta(x))^2 + 2 v^T (\nabla_x s_\theta(x)) v\right]
 \]
-\textbf{Trace 项变成 $v^T J v$}（$J = \nabla_x s_\theta$）。这只需要算\textbf{一次} Jacobian-vector product，等价于一次 backprop。$O(d)$ 降到 $O(1)$。
+\paragraph{Sliced 的 point 在哪里}
+
+Lemma 只证明了\textbf{两个 loss 数学等价}，但两个 loss 被\textbf{计算的方式}差 $d$ 倍。这才是 sliced 的核心 insight。
+
+\textbf{原 score matching 的痛点}：trace 项 $\text{Tr}(J) = \sum_{i=1}^d J_{ii}$（$J = \nabla_x s_\theta$ 是 Jacobian）。算一个对角元素 $J_{ii} = \frac{\partial (s_\theta)_i}{\partial x_i}$ 需要一次 backward through scalar output $(s_\theta)_i$。$d$ 个对角元素 = \textbf{$d$ 次 backward}。$d \approx 10^6$ 不可行。
+
+\textbf{Sliced 版本的 trace 项}：$v^T J v$（一个 scalar）。展开是 $\sum_{i,j} v_i v_j J_{ij}$，看起来更复杂——但有 trick 让它\textbf{只用一次 backward}：
+\begin{enumerate}[nosep]
+  \item 定义 scalar function $g(x) = v^T s_\theta(x)$（forward 一次 $s_\theta$ 然后 dot $v$）
+  \item 算 $\nabla_x g(x) = J^T v$ —— 因为 $g$ 是 scalar，这是\textbf{一次}标准 backward
+  \item 跟 $v$ 做 inner product：$v^T \nabla_x g = v^T J^T v$
+  \item 因为 $s_\theta = \nabla_x \log p_\theta$ 是 gradient field，Jacobian $J = \nabla_x s_\theta = \nabla_x^2 \log p_\theta$ 是 \textbf{Hessian}，是对称的（$J = J^T$），所以 $v^T J^T v = v^T J v$
+\end{enumerate}
+\textbf{总成本}：1 forward + 1 backward —— \textbf{跟一次普通的 SGD step 一样}。
+
+\textbf{对比}：
+
+\begin{center}
+\begin{tabular}{|l|l|l|}
+\hline
+ & 原 score matching & Sliced \\
+\hline
+Trace 项 & $\text{Tr}(J) = \sum_i J_{ii}$ & $v^T J v$ \\
+计算成本 & $d$ 次 backward & $1$ 次 backward \\
+图像 ($d = 10^6$) & 不可行 & 跟训普通网络一样 \\
+代价 & 无 & Monte Carlo over $v$ 引入 variance \\
+\hline
+\end{tabular}
+\end{center}
+
+\textbf{字面意义}："slicing" = 把 $d$-维 vector field $s_\theta$ 沿方向 $v$ 切一刀，得到 scalar function $g_v(x) = v^T s_\theta(x)$。像 CT 扫描的 1D 切片，研究每个 slice 比直接处理整个 $d$-维 field 简单。Monte Carlo over $v$ 覆盖所有方向。
+
+\textbf{核心 insight}：把 \textbf{vector problem} 变成 \textbf{scalar problem} 就解锁了 "1 次 backward" 的捷径。两个 loss expected gradient 一样，但 sliced 版本可以用便宜的 path 算出来。
 
 实际操作：每个 sample $x_i$ 配一个随机 $v_i$，loss 用 $(x_i, v_i)$ 估。
 
@@ -1674,6 +2121,32 @@ x_{t+1} = x_t - \eta \nabla_x E(x) + \sqrt{2\eta} \xi_k
 是 gradient descent + Gaussian noise 在 energy landscape 上跑。如果 energy landscape 有两个深 valley（两个 mode），中间隔个 hill，sampler 大部分时间被困在一个 valley 里，跨过 hill 到另一个 valley 需要等一个罕见的 noise spike 把它推过去。
 
 \textbf{Bovier '02, '04}：在 metastable system 里，从 mode A 跨到 mode B 的期望时间 $\sim \exp(\Delta E / T)$，\textbf{barrier 高度的指数}。深 modes $\to$ exponential mixing time。
+
+\subsection{什么时候 break：实际问题 3 --- Mixture weights 不可恢复（最根本）}
+
+这是 score matching 比 MLE 弱的\textbf{本质原因}，比 Issue 1 (low-mass) 和 Issue 2 (mixing) 还根本。前两个是"训练时见不到 data"和"采样跑不动"，这个是"\textbf{就算训得完美、采样也完美，结构上 mixture weights 还是不可识别}"。
+
+\textbf{Setup}：真分布 $p(x) = w_1 \mathcal{N}(0, \sigma^2) + w_2 \mathcal{N}(100, \sigma^2)$，两个 mode 隔得很远（"几乎不重叠"）。
+
+\textbf{致命观察}：在 mode 1 附近，第二个 Gaussian 贡献 $\sim e^{-100^2/2\sigma^2} \approx 0$，所以
+\[
+\log p(x) \approx \log\!\big(w_1 \mathcal{N}(x \mid 0, \sigma^2)\big) = \log(w_1) + \log \mathcal{N}(x \mid 0, \sigma^2)
+\]
+对 $x$ 求 gradient：
+\[
+\nabla_x \log p(x) \approx \nabla_x \log \mathcal{N}(x \mid 0, \sigma^2)
+\]
+$\log(w_1)$ 是\textbf{常数}，被 $\nabla_x$ 干掉了！同理 mode 2 那边的 score 只反映 mode 2 的 local shape，不含 $w_2$ 信息。
+
+\textbf{结论}：score matching \textbf{完全无法区分} $(w_1, w_2) = (0.5, 0.5)$ 和 $(0.9, 0.1)$ —— 这两个分布的 score function 在每个 mode 局部完全一样，loss 完全一样。每个 mode 的"高度"信息藏在 normalization $w_i$ 里，而 score $= \nabla \log p$ 把所有 multiplicative constant 干掉。这是 score 这个 quantity 的\textbf{本质 limitation}，跟具体算法无关。
+
+\textbf{为啥 Issue 1 不能救}：就算 $s_\theta$ 在 inter-mode 区域学得"看起来合理"（靠 neural net 的 smooth interpolation），从 mode 1 path-integrate 到 mode 2 得到的 $\log(w_2/w_1)$ 是\textbf{网络架构的产物}，不是从 data 来的。换个 architecture，得到不同的 mixture weights，data 没法仲裁。
+
+\textbf{常见误解的纠正}：很多人以为 "score 在 mode 之间几乎为 0" $\Rightarrow$ "采出来的密度在中间会被 smooth 到某个高度"。\textbf{错}。问题不在中间区域的\textbf{绝对密度}（那个由 network interpolation 决定），而在两个 mode 之间的\textbf{相对高度比例}完全不可识别。具体表现是：你跑 Langevin sampling 收敛后，两个 mode 都能采到，但每个 mode 被采到的频率比例跟真实 $w_1 : w_2$ 完全无关，由 $s_\theta$ 在中间的 interpolation + Langevin 初始化分布共同决定。
+
+\textbf{对比 MLE 为啥没这问题}：MLE objective $\sum_i \log p_\theta(x_i)$ 直接惩罚 $\log p_\theta$ 的\textbf{值}（不是 gradient），所以 normalization $w_i$ 进入 loss，能学。代价是要算 $Z$（即 EBM 那个跑 MCMC 的痛点）。Score matching 用"扔掉 $Z$"换"丢失 mixture weight 信息"——天下没有免费午餐。
+
+\textbf{DSM 怎么修这个}：加噪让两个 mode 在大 $\sigma$ 下\textbf{糊成一个连通的大 blob}，inter-mode 区域有 mass 了，path 上的 score 由 data 真正约束（不是 network 瞎填），mixture weights 通过这条 path integral 被 data 约束住。退火过程把 weight 信息一点点 transfer 到小 $\sigma$ 的精细 score。这就是为啥 DSM / 加噪 / diffusion 是 score matching 的标配——\textbf{不只是为了好采样，更是为了 mixture weights 可识别}。
 
 \subsection{Denoising Score Matching: Annealing 救场}
 
@@ -1774,20 +2247,169 @@ Require: noise levels {σ_1, ..., σ_L}, base step size ε, T steps per level
   \item Trace 太贵 ($O(d)$ backprops) $\to$ sliced score matching
   \item Low-mass region $\to$ score 不准 $\to$ Langevin 被带偏
   \item Multimodal 分布 $\to$ Langevin mixing 指数慢
-  \item 上面三个都被 DSM (annealing) fix
+  \item \textbf{Mixture weights 不可识别}：score $= \nabla \log p$ 把每个 mode 的 normalization $w_i$ 当常数干掉，无法区分 $(0.5, 0.5)$ 和 $(0.9, 0.1)$。\textbf{最根本的 limitation}
+  \item 上面四个都被 DSM (annealing) fix
   \item DSM 需要选 noise schedule $\{\sigma_i\}$，选不好效果差
 \end{enumerate}
 
-\textbf{Score matching vs MLE 的精度}：当 modes 之间 separation 很大时，score matching 估的 mode 高度可能跟真值差很远（因为 score 在 mode 之间几乎为 0，没区分度）。MLE 不会有这问题。这是 score matching 的固有 weakness。
+\textbf{Score matching vs MLE 的精度}：modes 之间 separation 大时，score matching \textbf{完全无法恢复 mixture weights}（不是"差一点"，是 \emph{结构上不可识别}）——因为 $\log w_i$ 是常数被 $\nabla_x$ 干掉，不进 score，loss 看不见。MLE 直接惩罚 $\log p$ 的值，$w_i$ 进 loss，能学。这是 score matching 的固有 weakness，是 score 这个量的本质 limitation。\textbf{记住：score 只看 shape，不看 weight。}
 
 % ============================================================
 \section{Noise Contrastive Estimation (NCE)}
 % Lecture 20
 % ============================================================
 
-\subsection{概念概览}
+\subsection{一句话核心}
 
-跟 score matching 平行的另一种绕开 $Z$ 的方法。把"学分布"变成"分辨真数据 vs 噪声"的 \textbf{binary classification}。分类器不需要知道 $Z$ 就能判断真假。
+\textbf{Score matching 的兄弟方法}。两者都绕开 MCMC、都不算 $Z$，但路径不同：
+\begin{itemize}[nosep]
+  \item Score matching：用 $\nabla_x$ \textbf{干掉} $Z$（$Z$ 是常数，$\nabla_x \log Z = 0$）
+  \item NCE：把 $Z$ \textbf{当成参数}显式学，用 binary classification 把它 pin 住
+\end{itemize}
+
+\textbf{NCE 的核心 trick}：把"学 $p_{\text{data}}$"变成"学一个 classifier 来分辨真 data vs 噪声"。Density estimation $\to$ binary classification —— 后者比前者容易得多。
+
+\subsection{为啥 $Z$ 可以当参数学}
+
+回忆 EBM：$p_\theta(x) = \tilde{p}_\theta(x) / Z(\theta)$，其中 $\tilde{p}_\theta(x) = e^{-E_\theta(x)}$ 是 unnormalized 部分。$Z(\theta) = \int \tilde{p}_\theta(x) \, dx$ 依赖 $\theta$，每次 $\theta$ 变 $Z$ 也变，不能当常数。
+
+\textbf{NCE 的 reparameterization}：引入新的 scalar 参数 $c$，model 写成
+\[
+\log p_\theta(x; c) = \log \tilde{p}_\theta(x) + c
+\]
+$c$ 名义上是 $-\log Z(\theta)$，但训练时\textbf{当独立的 free parameter}，\textbf{不要求} $\int p_\theta(x; c) \, dx = 1$。所以 $p_\theta(\cdot; c)$ 在训练过程中可以是个非 normalized 的 "density"。
+
+\textbf{为啥不能直接用 MLE 训 $(\theta, c)$}：MLE 想 max $\sum_i \log p_\theta(x_i; c) = \sum_i \log \tilde{p}_\theta(x_i) + Tc$。注意第二项是 $Tc$ —— 关于 $c$ 是\textbf{线性的}，无界。$c \to +\infty$ 时 likelihood 也 $\to +\infty$，optimization 直接崩。所以需要换一个对 $c$ \textbf{有界}的 objective。NCE 提供这个 objective。
+
+\subsection{怎么训：binary classification}
+
+\textbf{Setup}：
+\begin{itemize}[nosep]
+  \item Data: $x_1, \ldots, x_T \sim p_{\text{data}}$，label $C = 1$
+  \item Noise: $y_1, \ldots, y_{T\nu} \sim p_n$（你选的 easy distribution，比如 Gaussian），label $C = 0$
+  \item $\nu$ = 每个 data point 配 $\nu$ 个 noise sample（noise ratio）
+\end{itemize}
+
+\textbf{贝叶斯最优 classifier}：给定一个 sample $u$，问 "这是 data 还是 noise"。Class prior 是 $P(C=1) = \frac{1}{1+\nu}$, $P(C=0) = \frac{\nu}{1+\nu}$。由 Bayes:
+\[
+P(C=1 \mid u) = \frac{P(C=1) \, p_{\text{data}}(u)}{P(C=1) \, p_{\text{data}}(u) + P(C=0) \, p_n(u)} = \frac{p_{\text{data}}(u)}{p_{\text{data}}(u) + \nu \, p_n(u)}
+\]
+（$\frac{1}{1+\nu}$ 上下约掉。）
+
+\textbf{NCE classifier}：把上面公式里的 $p_{\text{data}}$ 换成 model
+\[
+h(u; \theta, c) = \frac{p_\theta(u; c)}{p_\theta(u; c) + \nu \, p_n(u)}
+\]
+注意：要能算 $h$，必须能 evaluate $p_n(u)$。所以 $p_n$ 不仅要可 sample，还要可 evaluate。
+
+\textbf{Loss = standard binary cross entropy}：
+\[
+\boxed{
+J(\theta, c) = \mathbb{E}_{x \sim p_{\text{data}}}\!\big[\log h(x; \theta, c)\big] + \nu \, \mathbb{E}_{y \sim p_n}\!\big[\log(1 - h(y; \theta, c))\big]
+}
+\]
+最大化 $J$ = 训一个 classifier 把 data 和 noise 分开。
+
+\subsection{为啥 $c$ 不会跑飞（key insight）}
+
+这是 NCE 解决"$c$ 在 MLE 里跑飞"的关键。
+
+\textbf{$c$ 太大}：$p_\theta(y; c) = \tilde{p}_\theta(y) e^c$ 大 $\Rightarrow$ $h(y) \to 1$ $\Rightarrow$ 把 noise sample $y$ 也判成 data $\Rightarrow$ 第二项 $\log(1-h(y)) \to -\infty$ $\Rightarrow$ loss 差。
+
+\textbf{$c$ 太小}：$p_\theta(x; c)$ 小 $\Rightarrow$ $h(x) \to 0$ $\Rightarrow$ 把 data 也判成 noise $\Rightarrow$ 第一项 $\log h(x) \to -\infty$ $\Rightarrow$ loss 差。
+
+所以 $c$ 被两边\textbf{夹住}，optimum 收敛到 $c^* = -\log Z(\theta^*)$。
+
+\textbf{为啥 BCE 不像 MLE 那样崩}：BCE 每项 $\log h, \log(1-h) \in (-\infty, 0]$，\textbf{有上界 $0$}，所以"无脑放大 $c$"没有用 —— 上界拦住你了。而 MLE 的 likelihood 是\textbf{无界的}（可以任意大），$c$ 一放大就涨。这是 NCE 选 BCE 而不是 MLE 的本质原因。
+
+\textbf{Consistency 定理}（Gutmann-Hyvärinen 2010）：在合理 regularity 条件下，NCE estimator $(\hat\theta, \hat c)$ 是 consistent 的：$T \to \infty$ 时收敛到真值 $(\theta^*, -\log Z(\theta^*))$。
+
+\subsection{跟 score matching 的对比}
+
+\begin{center}
+\begin{tabular}{|l|l|l|}
+\hline
+ & Score Matching & NCE \\
+\hline
+怎么扔 $Z$ & $\nabla_x$ 干掉 & 当参数 $c$ 学 \\
+需要的能力 & $\nabla_x \log \tilde{p}_\theta$ 可微 & $\tilde{p}_\theta(u)$ 可 evaluate \\
+需要 noise distribution? & 不需要 & 需要 $p_n$（可 sample 可 evaluate） \\
+Mixture weights 能学? & \textbf{学不到} & \textbf{能学} \\
+主要 weakness & 高维 mode 间无信号 & $p_n$ 选不好就崩 \\
+\hline
+\end{tabular}
+\end{center}
+
+\textbf{为啥 NCE 能学 mixture weights 而 score matching 不能}：NCE 学的是 $p_\theta$ 的\textbf{绝对值}（通过 $c$ 把 normalization 学回来），所以 $\log w_i$ 进入 loss，能学。Score matching 只学 $\nabla \log p$（gradient），常数 $\log w_i$ 被干掉，永远学不到。这是 NCE 比 score matching 严格更强的地方。
+
+\subsection{什么时候 break}
+
+\textbf{Issue 1：$p_n$ 选不好（NCE 的命门）}
+
+\begin{itemize}[nosep]
+  \item $p_n$ 离 $p_{\text{data}}$ 太远 $\Rightarrow$ classifier trivially 100\% accuracy $\Rightarrow$ gradient 饱和 $\Rightarrow$ $\theta$ 学不到信号。直觉：classifier 凭借 "noise 在哪里 / data 在哪里" 这个粗糙 region 信息就能完美区分，不需要 model $\theta$ 提供精细信息
+  \item $p_n$ 跟 $p_{\text{data}}$ 一模一样 $\Rightarrow$ 理论上最优，但你都能采 $p_{\text{data}}$ 了还训啥 (chicken-and-egg)
+  \item \textbf{Rule of thumb}：$p_n$ 是 $p_{\text{data}}$ 的一个 tractable 粗估计。例如 NLP 里用 unigram (词频) 作为 noise distribution
+\end{itemize}
+
+\textbf{Issue 2：高维 (curse of dimensionality)}
+
+高 D 下任何两个分布的 support 几乎不 overlap，classifier trivially perfect。跟 GAN 训练初期同样的问题（L17 里的 vanishing gradient on disjoint support）。
+
+\textbf{Issue 3：$\nu$ tradeoff}
+
+\begin{itemize}[nosep]
+  \item 大 $\nu$ $\Rightarrow$ NCE estimator 的 asymptotic variance 小
+  \item $\nu \to \infty$ 时 NCE estimator $\to$ MLE estimator（asymptotically equivalent）
+  \item 但 compute 也增 $\nu$ 倍 —— 实际选 $\nu \in [1, 100]$ 之间
+\end{itemize}
+
+\subsection{InfoNCE：现代 contrastive learning 的基础}
+
+\textbf{NCE 的 multi-class 推广}（van den Oord et al.\ 2018，``Representation Learning with Contrastive Predictive Coding''）：
+\begin{itemize}[nosep]
+  \item 不是 binary 区分，而是 $K$-way classification
+  \item 给 $K$ 个候选：1 个正样本 $y^+$ + $K-1$ 个 negatives $y_1^-, \ldots, y_{K-1}^-$
+  \item 任务：classifier 判哪个是正
+\end{itemize}
+
+\[
+\mathcal{L}_{\text{InfoNCE}} = -\mathbb{E}\!\left[\log \frac{e^{f(x, y^+)}}{e^{f(x, y^+)} + \sum_{i=1}^{K-1} e^{f(x, y_i^-)}}\right]
+\]
+其中 $f(x, y)$ 是某个 score function（比如 inner product of embeddings）。这是 \textbf{softmax over $K$ candidates} 的 negative log likelihood。
+
+\textbf{InfoNCE 是这些方法的基础}：
+\begin{itemize}[nosep]
+  \item \textbf{word2vec}（skip-gram with negative sampling）—— 跟 NCE 关系最直接
+  \item \textbf{SimCLR / MoCo}（visual contrastive learning）
+  \item \textbf{CLIP}（image-text alignment）
+\end{itemize}
+
+\textbf{为啥叫 ``Info''NCE}：可以证明 $\mathcal{L}_{\text{InfoNCE}}$ 是 mutual information $I(x; y^+)$ 的一个 \textbf{lower bound}。最小化 InfoNCE $\Leftrightarrow$ 最大化 mutual information lower bound。考点。
+
+\subsection{什么时候 break / 重点回顾}
+
+\textbf{核心公式}：
+\begin{itemize}[nosep]
+  \item Self-normalized model：$\log p_\theta(x; c) = \log \tilde{p}_\theta(x) + c$
+  \item Optimal classifier：$h(u) = \frac{p_\theta(u; c)}{p_\theta(u; c) + \nu p_n(u)}$
+  \item BCE loss：$J(\theta, c) = \mathbb{E}_{p_{\text{data}}}[\log h] + \nu \mathbb{E}_{p_n}[\log(1-h)]$
+\end{itemize}
+
+\textbf{为啥 NCE work}：BCE 是有界 objective，$c$ 不会跑飞；BCE 的 optimum 在 $h = P(C=1|u)$，这要求 $p_\theta = p_{\text{data}}$ 且 $c = -\log Z(\theta^*)$。
+
+\textbf{什么时候 break}：
+\begin{enumerate}[nosep]
+  \item $p_n$ 选不好（太远 $\to$ trivial classifier；太近 $\to$ chicken-and-egg）
+  \item 高维 curse of dimensionality（support 不 overlap）
+  \item $\nu$ tradeoff（小 $\nu$ 高 variance，大 $\nu$ 高 cost）
+\end{enumerate}
+
+\textbf{vs Score Matching}：NCE 能学 mixture weights，score matching 不能（NCE 强）；NCE 需要选 $p_n$，score matching 不需要（SM 强）。两者各有 trade-off。
+
+\textbf{vs MLE}：$\nu \to \infty$ 时 NCE $\to$ MLE。NCE 是用 noise samples 替代 MCMC samples 的 MLE 近似。
+
+\textbf{现代意义}：InfoNCE 是 contrastive learning 的基础。任何用 ``positive vs negative samples'' 的 representation learning 方法（CLIP、SimCLR 等）都可以追溯到 NCE。
 
 % ============================================================
 \section{Diffusion Models}
@@ -2012,6 +2634,232 @@ L_{\text{simple}} = \mathbb{E}_{\mathbf{x}_0, \boldsymbol{\epsilon}} \left[ \| \
 \end{itemize}
 
 % ============================================================
+\section{Causality (Intro)}
+% Lecture 22
+% ============================================================
+
+\subsection{大局：从 association 到 intervention}
+
+整个学期前 21 讲都在做 \textbf{associational reasoning}：$P(Y \mid X)$ —— "看到 $X$，更新对 $Y$ 的 belief"。L22 引入新概念 \textbf{interventional reasoning}：$P(Y \mid do(X))$ —— "强制设定 $X$，$Y$ 会怎么变"。
+
+这两个东西\textbf{根本不同}，混淆它们 = 经典的"correlation $\neq$ causation"错误。L22 给一个数学框架精确区分两者。这是 Judea Pearl 1990s 的工作，2011 年图灵奖。
+
+\subsection{从 directed graph 到 causal graph：改变 interpretation}
+
+L2 的 directed graphical model：边 $X \to Y$ 表示 $X$ 进入 $Y$ 的 conditional probability table $P(Y \mid X, \text{others})$。\textbf{方向是任意的} —— 同一个 joint distribution 可以有多个 valid DAG factorization。\emph{Conditional independencies alone cannot determine the graph.}
+
+L22 对同一个 graph 重新赋予 \textbf{causal 含义}：边 $X \to Y$ 表示 "$X$ 是 $Y$ 的 \textbf{direct cause}"，方向是\textbf{物理 / 机制上的}，不能随便翻。
+
+\textbf{关键差别}：普通 DGM 里 $a \to b$ 和 $b \to a$ 经常等价（同一 joint）；causal DAG 里两者完全不同 —— 一个说 "改变 $a$ 影响 $b$"，反过来意思相反。
+
+\subsection{Structural Causal Model (SCM)：用 equations 替代 CPT}
+
+普通 DGM 用 conditional probability table $P(C \mid A, B)$ 描述 $C$ 怎么依赖父节点。
+
+SCM 用 \textbf{structural equation} 写：
+\[
+C := f_C(A, B, U_C)
+\]
+注意是 $:=$（assignment），不是 $=$（equality）。表示 "$C$ 的值\textbf{机制上由} $A, B, U_C$ 决定"。$U_C$ 是 \textbf{exogenous variable}（外生变量）—— 模型外的随机源（噪声、未建模因素、机制不确定性）。
+
+每个 node $X_i$ 都有自己的 exogenous $U_i$ 和 structural equation：
+\[
+X_i := f_i(\text{pa}(X_i), U_i)
+\]
+
+\textbf{Endogenous vs exogenous}：
+\begin{itemize}[nosep]
+  \item \textbf{Endogenous}：$X_i$ 们 —— 模型里的变量，由 structural equations 决定
+  \item \textbf{Exogenous}：$U_i$ 们 —— 模型外的随机源，没有 incoming edges
+\end{itemize}
+
+\textbf{为啥引入 $U_i$}：让 deterministic equation 也能描述 stochastic relationships。任何 conditional distribution $P(X_i \mid \text{pa})$ 都可以重写成 $X_i := f_i(\text{pa}, U_i)$ 的形式，只要 $U_i$ 是合适的随机变量（类似 \textbf{inverse CDF transform}）。
+
+\textbf{为啥要 SCM 而不是 CPT}：structural equations 显式分离了"机制 $f$"和"随机性 $U$"。intervention 时 $f$ 被改但 $U$ 不变 —— 这种分离让 do() 操作有清晰的数学定义。
+
+\subsection{do operator —— intervention 的数学定义}
+
+\textbf{Intervention} = "强行把某个变量设成某个值，并\textbf{切断}它的正常 causal mechanism"。例：给病人吃药 = 强制让 "吃药" 变量等于 1，不管这人本来会不会吃。
+
+\textbf{$do(Y = y)$ 的数学定义}：在 SCM 里把 $Y$ 的 structural equation
+\[
+Y := f_Y(\text{pa}(Y), U_Y)
+\]
+\textbf{替换}为
+\[
+Y := y
+\]
+其他所有变量的 equations 不变。
+
+\textbf{Modularity assumption}：干预 $Y$ \textbf{只}影响 $Y$ 的 mechanism，不影响其他变量的 mechanism。这是 SCM 框架最强的假设。物理上对应 "intervention 只影响被干预的那一个 mechanism"。如果干预有 side effects（药物影响多个 mechanism），这个假设就破，SCM framework 不适用。
+
+\textbf{Graph 的变化}：从 $Y$ 指向其父节点的所有边\textbf{被切断}（$Y$ 不再依赖父节点）。这叫 \textbf{mutilated graph}（截断图）。
+
+\subsection{$do()$ vs conditioning —— 最关键的区分}
+
+\[
+\boxed{P(X = x \mid Y = y) \neq P(X = x \mid do(Y = y))}
+\]
+
+\textbf{Conditioning on $Y = y$}：看真实人群中\textbf{满足 $Y = y$ 的子人群}，问其中 $X = x$ 的比例。这是\textbf{选择 (selection)} 操作。
+
+\textbf{$do(Y = y)$}：看\textbf{整个人群}，强制\textbf{覆盖 (override)} 所有人的 $Y$ 为 $y$，问 $X = x$ 的比例。这是\textbf{操纵 (manipulation)} 操作。
+
+\textbf{冰淇淋 / 晒伤经典例子}：
+\begin{itemize}[nosep]
+  \item $P(\text{晒伤} \mid \text{吃冰淇淋})$ 很高 —— 吃冰淇淋的子人群多在夏天，晒伤多
+  \item $P(\text{晒伤} \mid do(\text{吃冰淇淋}))$ $=$ baseline —— 强制让人吃冰淇淋不会让他们晒伤
+\end{itemize}
+差别来自 confounder（共同原因）"夏天"。Conditioning 把 confounder 信息泄漏进来，$do()$ 切断这个泄漏。
+
+\textbf{Slogan}：``correlation $\neq$ causation'' 的精确数学版就是 $P(Y \mid X) \neq P(Y \mid do(X))$。
+
+\subsection{Pearl 的因果三层 ladder（考点）}
+
+\begin{center}
+\begin{tabular}{|c|l|l|l|}
+\hline
+Level & 名字 & 问题 & 数学符号 \\
+\hline
+1 & Association & 看到了什么? & $P(Y \mid X)$ \\
+2 & Intervention & 如果我做了... 会怎样? & $P(Y \mid do(X))$ \\
+3 & Counterfactual & 如果当时... 现在会怎样? & $P(Y_x \mid X', Y')$ \\
+\hline
+\end{tabular}
+\end{center}
+
+\textbf{Activity}：Level 1 = Seeing；Level 2 = Doing；Level 3 = Imagining。
+
+\textbf{爬楼梯方向只能往上看}：Level 1 的数据回答不了 Level 2 的问题，Level 2 的数据回答不了 Level 3 的问题。机器学习几乎全在 Level 1。L22 引入 Level 2。Counterfactual (Level 3) 这门课没讲。
+
+\subsection{Truncated factorization —— $do()$ 的核心公式}
+
+普通 joint distribution 的 factorization (DGM)：
+\[
+P(x_1, \ldots, x_n) = \prod_{i=1}^n P(x_i \mid \text{pa}_i)
+\]
+
+干预集合 $S$ 之后的 joint：
+\[
+P(x_1, \ldots, x_n \mid do(S = s)) = \begin{cases} \prod_{i \notin S} P(x_i \mid \text{pa}_i) & x \text{ 跟 intervention 一致} \\ 0 & \text{否则} \end{cases}
+\]
+
+\textbf{要点}：
+\begin{enumerate}[nosep]
+  \item $i \in S$ 的 factor 被\textbf{扔掉}（这些变量被强制赋值，不再有 probability distribution）
+  \item $i \notin S$ 的 factor 用\textbf{原 conditional probability}（modularity：其他 mechanism 不变）
+  \item $x$ 必须跟 intervention 一致，否则概率为 0
+\end{enumerate}
+
+\textbf{关键}：这是把 $P(\cdot \mid do)$ 化成\textbf{原 conditional probability 的乘积}的桥梁。如果你能 evaluate 原 conditional，你就能 evaluate intervention。
+
+\subsection{Identification —— 从 observational data 反推 causal effect}
+
+\textbf{问题}：经常没法做实验（伦理、成本），只有 observational data。能不能算出 $P(Y \mid do(X))$？
+
+\textbf{Identifiable}：如果一个 causal quantity 可以\textbf{唯一}地被 observational distribution 决定，叫 identifiable。
+
+\textbf{Pipeline}：
+\[
+\underbrace{P(Y \mid do(T))}_{\text{Causal Estimand}} \xrightarrow{\text{Identification}} \underbrace{P(Y \mid T, X, \ldots)}_{\text{Statistical Estimand}} \xrightarrow{\text{Estimation}} \text{Estimate}
+\]
+第一步是 causal inference 的核心难题，第二步是普通统计。
+
+\subsection{Adjustment formula —— 最简单的 identification}
+
+\textbf{Setup}：confounder $X$ 同时影响 treatment $T$ 和 outcome $Y$（$X \to T$, $X \to Y$, $T \to Y$）。
+
+\textbf{Observational} $P(Y \mid T)$（普通 conditioning）：
+\[
+P(Y = y \mid T = t) = \sum_x P(X = x \mid T = t) \, P(Y = y \mid X = x, T = t)
+\]
+注意 $P(X \mid T)$ —— $X$ 和 $T$ 通过 confounding 关联，$P(X \mid T) \neq P(X)$。
+
+\textbf{Interventional} $P(Y \mid do(T))$（用 truncated factorization 推）：
+\[
+\boxed{P(Y = y \mid do(T = t)) = \sum_x P(X = x) \, P(Y = y \mid X = x, T = t)}
+\]
+注意：$P(X)$ 而不是 $P(X \mid T)$。差别就在这里！
+
+\textbf{为啥差别在 $P(X)$ vs $P(X \mid T)$}：干预 $T$ 时，原 $X \to T$ 这条边被切断。$X$ 不再受 $T$ 影响，恢复成它的 marginal $P(X)$。Conditioning 时这条边还在，所以是 $P(X \mid T)$。
+
+\textbf{这个公式叫 ``adjustment by $X$'' 或 ``stratification by $X$''}。直觉：在每个 $X$ 取值的 stratum 内，treatment 是 ``exogenous'' 的（confounding 被 $X$ 控制掉了），所以 stratum 内的 $P(Y \mid X, T)$ 反映真 causal effect。然后用 $P(X)$（不是 $P(X \mid T)$）做加权平均。
+
+\textbf{只依赖 observational quantities}：注意 RHS 完全用 $P(X), P(Y \mid X, T)$，都是从 observational data estimable 的。所以 $do(T)$ 在这个 graph 下\textbf{是 identifiable 的}。
+
+\subsection{Simpson's Paradox —— causal thinking 的必要性}
+
+\textbf{Setup}：肾结石治疗。$T \in \{A, B\}$ 是 treatment（A = 开放手术, B = 闭合手术）；$C \in \{\text{small}, \text{large}\}$ 是结石大小（confounder）；$Y \in \{0, 1\}$ 是是否成功。
+
+\textbf{数据}：
+\begin{center}
+\begin{tabular}{|l|c|c|}
+\hline
+ & Treatment A & Treatment B \\
+\hline
+Small stones & 93\% (81/87) & 87\% (234/270) \\
+Large stones & 73\% (192/263) & 69\% (55/80) \\
+\hline
+\textbf{Both} & \textbf{78\% (273/350)} & \textbf{83\% (289/350)} \\
+\hline
+\end{tabular}
+\end{center}
+
+\textbf{矛盾}：
+\begin{itemize}[nosep]
+  \item Small stones 子组里 A 更好（93\% > 87\%）
+  \item Large stones 子组里 A 更好（73\% > 69\%）
+  \item 但合起来看 B 更好（83\% > 78\%）！
+\end{itemize}
+
+\textbf{为啥发生}：confounding。Treatment A 主要被分配给\textbf{严重病人}（large stones：263/350），Treatment B 主要被分配给\textbf{轻病人}（small stones：270/350）。所以 marginal 看起来 B 好，是因为 B 的人本来就好治。
+
+\textbf{哪个数字是 causal effect}：stratified 数字（每个子组里 A 都更好）才是真 causal effect。Marginal 数字是 confounding 的 artifact。
+
+\textbf{用 adjustment formula 算}：
+\[
+P(\text{success} \mid do(T = A)) = P(\text{small}) \cdot 0.93 + P(\text{large}) \cdot 0.73 \approx 0.832
+\]
+\[
+P(\text{success} \mid do(T = B)) = P(\text{small}) \cdot 0.87 + P(\text{large}) \cdot 0.69 \approx 0.782
+\]
+其中 $P(\text{small}) = 357/700 = 0.51$, $P(\text{large}) = 343/700 = 0.49$（marginal 比例）。
+
+注意权重是 marginal $P(\text{small}), P(\text{large})$，\textbf{不是} $P(\text{small} \mid T = A)$ 或 $P(\text{small} \mid T = B)$。这样算出来 \textbf{A 更好}（83.2\% > 78.2\%）。跟 stratified 一致，跟 marginal 相反。
+
+\textbf{核心 message}：没有 causal graph 你都不知道该看哪一行。Simpson's paradox 不是 statistical paradox，是\textbf{缺少 causal reasoning} 的 paradox。
+
+\subsection{后续 identification strategies（本课只提名字，下节课讲）}
+
+\begin{itemize}[nosep]
+  \item \textbf{Backdoor criterion}：找一组变量 $Z$ blocking 所有 ``non-causal paths'' 从 $T$ 到 $Y$，然后用 $Z$ adjust。Adjustment formula 是 backdoor 的特例。\emph{Sufficient} for identification.
+  \item \textbf{Frontdoor criterion}：当存在 \textbf{unobserved confounder}（你看不到的 confounder）时，仍然可能 identify —— 通过中介变量。\emph{Sufficient} for identification.
+  \item \textbf{do-calculus}（Pearl 1995）：3 条 rewriting rules，可以 mechanically 把任何 $P(\cdot \mid do)$ 化成 observational quantities（如果可以的话）。\emph{Complete}：可识别的因果量\textbf{都}能用 do-calculus 推出来
+\end{itemize}
+
+\subsection{什么时候 break / 重点回顾}
+
+\textbf{核心概念}：
+\begin{itemize}[nosep]
+  \item SCM = structural equations $X_i := f_i(\text{pa}_i, U_i)$ + exogenous noises
+  \item $do(Y = y)$ = 把 $Y$ 的 equation 替换成 $Y := y$，cut 所有 incoming edges
+  \item $P(Y \mid X) \neq P(Y \mid do(X))$ in general
+  \item Truncated factorization：$P(\cdot \mid do(S=s)) = \prod_{i \notin S} P(x_i \mid \text{pa}_i)$
+  \item Adjustment formula：$P(Y \mid do(T)) = \sum_x P(X) P(Y \mid X, T)$（注意 $P(X)$ 不是 $P(X \mid T)$）
+\end{itemize}
+
+\textbf{什么时候 break}：
+\begin{enumerate}[nosep]
+  \item \textbf{Modularity assumption fails}：intervention 有 side effects（药物影响多个 mechanism）
+  \item \textbf{Hidden confounders}：有未观测的共同原因，backdoor 不能直接用
+  \item \textbf{Selection bias}：data 收集本身被结果影响（比如只调查存活者）
+  \item \textbf{Causal graph 错}：整个 framework 依赖给定的 DAG 是对的，DAG 错了 identification 也错
+  \item \textbf{Positivity violation}：某些 $X = x$ 下 $P(T = t \mid X = x) = 0$，stratum 里没数据，没法 estimate
+\end{enumerate}
+
+\textbf{Pearl 的核心 insight}：concepts 比 statistics 重要 —— 同样的数据，不同的 causal graph，answer 不同。Causal inference $\neq$ data analysis；它需要\textbf{先有 causal model，再有 data}。
+
+% ============================================================
 \section*{后半学期一句话总结}
 % ============================================================
 
@@ -2024,6 +2872,7 @@ L_{\text{simple}} = \mathbb{E}_{\mathbf{x}_0, \boldsymbol{\epsilon}} \left[ \| \
   \textbf{L19 Score Match} & 扔掉 $Z$，匹配梯度 \\
   \textbf{L20 NCE} & 扔掉 $Z$，用分类 \\
   \textbf{L21 Diffusion} & Score matching + annealing 推到连续极限 (SDE) \\
+  \textbf{L22 Causality} & 从 $P(Y\mid X)$ 升级到 $P(Y\mid do(X))$；intervention $\neq$ conditioning \\
 \end{tabular}
 \end{center}
 
